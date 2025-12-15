@@ -154,10 +154,10 @@ def match_original_from_name(ref_dir: Path, comp_file: Path) -> Optional[Path]:
     # AQ 输出会在末尾加 _aq（例如 *_nvidia_qp25_aq.mp4），这里先去掉该后缀以便匹配原片名
     stem = re.sub(r"_aq$", "", stem)
     patterns = [
-        re.compile(r"^(?P<base>.+)_intel_q\\d+$"),
-        re.compile(r"^(?P<base>.+)_nvidia_qmax\\d+$"),
-        re.compile(r"^(?P<base>.+)_nvidia_qp\\d+$"),
-        re.compile(r"^(?P<base>.+)_mac_qv\\d+$"),
+        re.compile(r"^(?P<base>.+)_intel_q\d+$"),
+        re.compile(r"^(?P<base>.+)_nvidia_qmax\d+$"),
+        re.compile(r"^(?P<base>.+)_nvidia_qp\d+$"),
+        re.compile(r"^(?P<base>.+)_mac_qv\d+$"),
     ]
 
     base_stem = None
