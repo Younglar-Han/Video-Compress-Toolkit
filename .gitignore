@@ -7,3 +7,8 @@
 *.MOV
 *.avi
 *.AVI
+/old_scripts/
+__pycache__/
+*.png
+/Results/
+/.github/
