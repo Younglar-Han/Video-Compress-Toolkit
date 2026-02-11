@@ -7,17 +7,18 @@
 ## 核心功能
 
 1.  **多平台压缩**：支持 Intel, Nvidia, Mac 硬件加速编码。
-2.  **批量测试**：一键生成不同参数（QP/CRF/Bitrate）下的压缩样本。
-3.  **画质评估**：批量计算 VMAF 分数。
-4.  **可视化**：生成压缩效率曲线（VMAF vs Bitrate）。
+2.  **智能压缩**：自动调节参数，确保在满足 VMAF 画质要求（如 > 95）的前提下尽可能压缩，若压缩率不高则保留原片。
+3.  **批量测试**：一键生成不同参数（QP/CRF/Bitrate）下的压缩样本。
+4.  **画质评估**：批量计算 VMAF 分数。
+5.  **可视化**：生成压缩效率曲线（VMAF vs Bitrate）。
 
 ## 快速开始
 
 ### 1. 环境准备
 
-- Python 3.8+
+- Python 3.9+
 - FFmpeg (需支持对应的硬件编码器，如 `hevc_nvenc`, `hevc_qsv`, `hevc_videotoolbox`)
-  - 建议安装完整版 FFmpeg，包含 `libvmaf` 支持。
+  - **必须**安装完整版 FFmpeg，包含 `libvmaf` 支持 (智能压缩和分析功能强依赖)。
 - Python 依赖:
   ```bash
   pip install pandas matplotlib
@@ -37,6 +38,7 @@ python main.py -h
 #### 1. Compress 命令 (普通压缩 / 递归压缩)
 
 用于压缩单个文件，或者递归压缩整个目录下的所有视频。
+**注意**：默认启用 80% 体积限制。如果压缩后体积超过原视频的 80%，系统会自动放弃压缩，直接复制原文件。
 
 **参数说明**：
 - `input`: 输入文件路径或文件夹路径
@@ -47,19 +49,30 @@ python main.py -h
 **示例**：
 ```bash
 # macOS 递归压缩 Videos 目录到 Compressed 目录
-# 推荐质量参数：q:v 58 (范围推荐 50-70)
-python main.py compress Videos Compressed --encoder mac --quality 58
-
-# Nvidia 递归压缩
-# 推荐质量参数：QP 24 (范围推荐 19-30, 值越小画质越好体积越大)
-python main.py compress Videos Compressed --encoder nvidia --quality 24
-
-# Intel 递归压缩
-# 推荐质量参数：Global Priority 21 (范围推荐 18-25)
-python main.py compress Videos Compressed --encoder intel --quality 21
+python main.py compress Videos Compressed --encoder mac
 ```
 
-#### 2. Batch 命令 (批量参数测试)
+#### 2. Smart 命令 (智能压缩) ✨
+
+自动寻找最佳压缩参数的智能模式。
+从推荐参数开始压缩，计算 VMAF 分数。如果分数低于目标（默认 95），则逐步提高画质参数重试。
+直至满足 **VMAF >= 95** 或 **体积 >= 80% 原视频**。
+如果最终体积依然超标，则直接使用原视频。
+
+**参数说明**：
+- `input`: 输入/目录
+- `output`: 输出/目录
+- `--encoder`: 编码器
+- `--vmaf-target`: 目标 VMAF 分数 (默认 95.0)
+- `--size-limit`: 最大体积比例 (默认 0.8，即 80%)
+
+**示例**：
+```bash
+# Nvidia 智能压缩，目标 VMAF 95，最大体积 80%
+python main.py smart Videos SmartOutput --encoder nvidia --vmaf-target 95.0
+```
+
+#### 3. Batch 命令 (批量参数测试)
 
 专用于压缩测试。会自动在指定范围内（start 到 end）生成所有参数的样本。
 生成的视频文件名会自动带上参数后缀（如 `_nvidia_qp24.mp4`），以便后续自动分析。
@@ -83,7 +96,7 @@ python main.py batch --source Videos --output Results/MAC --encoder mac --start 
 python main.py batch --source Videos --output Results/Intel --encoder intel --start 18 --end 25
 ```
 
-#### 3. Analyze 命令 (计算 VMAF)
+#### 4. Analyze 命令 (计算 VMAF)
 
 计算压缩视频的 VMAF 分数（Netflix 开源的感知画质指标）。
 它会自动扫描 `--comp-dirs` 里的视频，尝试在 `--ref-dir` 中找到对应的原片进行对比。
@@ -93,6 +106,7 @@ python main.py batch --source Videos --output Results/Intel --encoder intel --st
 - `--comp-dirs`: 包含压缩视频的目录列表（可传多个）
 - `--output`: 结果 CSV 路径
 - `--jobs`: 并行处理数（推荐等于 CPU 核数）
+- `--use-neg-model`: 使用 NEG 模型（适合重压缩场景）
 
 **示例**：
 ```bash
@@ -100,15 +114,10 @@ python main.py batch --source Videos --output Results/Intel --encoder intel --st
 python main.py analyze --ref-dir Videos --comp-dirs Results/NVENC Results/Intel Results/MAC --output Results/scores.csv --jobs 4
 ```
 
-#### 4. Plot 命令 (绘制图表)
+#### 5. Plot 命令 (画图)
 
-读取 Analyze 生成的 CSV，画出 **VMAF vs Bitrate** 的效率曲线图。越靠左上角的曲线效率越高（同样的码率画质更好，或者同样的画质码率更低）。
+根据 analyze 生成的 csv 绘制 VMAF 效率曲线。
 
-**参数说明**：
-- `--csv`: 输入的 CSV 文件路径
-- `--output-dir`: 图表输出目录
-
-**示例**：
 ```bash
 python main.py plot --csv Results/scores.csv --output-dir Results/Plots
 ```

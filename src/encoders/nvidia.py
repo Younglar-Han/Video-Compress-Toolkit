@@ -11,6 +11,18 @@ class NvidiaEncoder(BaseEncoder):
     def codec_name(self) -> str:
         return "hevc_nvenc"
 
+    @property
+    def default_quality(self) -> int:
+        return 24
+
+    @property
+    def quality_step(self) -> int:
+        return -1 # Lower QP is better
+
+    @property
+    def quality_range(self) -> tuple[int, int]:
+        return (0, 51)
+
     def get_ffmpeg_args(
         self, 
         input_path: Path, 

@@ -15,6 +15,27 @@ class BaseEncoder(ABC):
         pass
 
     @property
+    @abstractmethod
+    def default_quality(self) -> int:
+        """推荐的默认质量参数。"""
+        pass
+
+    @property
+    @abstractmethod
+    def quality_step(self) -> int:
+        """
+        质量调整步长。
+        正数表示增加该值会提高质量（例如 bitrate, q:v）。
+        负数表示减少该值会提高质量（例如 CRF, QP, global_quality）。
+        """
+        pass
+    
+    @property
+    def quality_range(self) -> tuple[int, int]:
+        """质量参数的有效范围 (min, max)。"""
+        return (0, 100)
+
+    @property
     def codec_name(self) -> str:
         """FFmpeg 编解码器名称（例如 hevc_nvenc）。"""
         return "" 

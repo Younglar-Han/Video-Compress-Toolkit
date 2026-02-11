@@ -11,6 +11,18 @@ class IntelEncoder(BaseEncoder):
     def codec_name(self) -> str:
         return "hevc_qsv"
 
+    @property
+    def default_quality(self) -> int:
+        return 25
+
+    @property
+    def quality_step(self) -> int:
+        return -1 # Lower is better for global_quality
+
+    @property
+    def quality_range(self) -> tuple[int, int]:
+        return (1, 51) 
+
     def get_ffmpeg_args(self, input_path: Path, output_path: Path, quality: int = 21, **kwargs) -> List[str]:
         # Intel QSV 模式
         return [

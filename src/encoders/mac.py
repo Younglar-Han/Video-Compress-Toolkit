@@ -11,6 +11,18 @@ class MacEncoder(BaseEncoder):
     def codec_name(self) -> str:
         return "hevc_videotoolbox"
 
+    @property
+    def default_quality(self) -> int:
+        return 58
+
+    @property
+    def quality_step(self) -> int:
+        return 1 # Higher is better for q:v
+
+    @property
+    def quality_range(self) -> tuple[int, int]:
+        return (1, 100)
+
     def get_ffmpeg_args(self, input_path: Path, output_path: Path, quality: int = 58, **kwargs) -> List[str]:
         # macOS VideoToolbox 模式
         return [

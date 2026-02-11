@@ -28,6 +28,9 @@ def cmd_compress(args):
     kwargs = {}
     if args.quality:
         kwargs['quality'] = args.quality
+    
+    # 默认启用 80% 体积限制检查，与 Smart 模式保持一致
+    max_ratio = 0.8
         
     # 如果输入是目录则使用递归模式
     if input_path.is_dir():
@@ -44,13 +47,13 @@ def cmd_compress(args):
                 print(f"Skipping {out_file.name} (exists)")
                 continue
                 
-            compressor.compress_file(vid, out_file, **kwargs)
+            compressor.compress_file(vid, out_file, max_ratio=max_ratio, **kwargs)
     else:
         # 单个文件
         if output_path.is_dir():
             output_path = output_path / input_path.name
         
-        compressor.compress_file(input_path, output_path, **kwargs)
+        compressor.compress_file(input_path, output_path, max_ratio=max_ratio, **kwargs)
 
 def cmd_batch(args):
     """批量处理带有参数范围的压缩。"""
@@ -125,6 +128,61 @@ def cmd_analyze(args):
         use_neg_model=args.use_neg_model
     )
 
+def cmd_smart(args):
+    """处理智能压缩模式。"""
+    input_path = Path(args.input).resolve()
+    output_path = Path(args.output).resolve()
+    
+    if not input_path.exists():
+        print(f"Error: Input {input_path} does not exist.")
+        return
+
+    encoder = get_encoder(args.encoder)
+    compressor = Compressor(encoder)
+    vmaf = VMAFAnalyzer() 
+    
+    # 如果输入是目录
+    if input_path.is_dir():
+        videos = find_videos(input_path, recursive=True)
+        print(f"Found {len(videos)} videos in {input_path}")
+        
+        for vid in videos:
+            rel_path = vid.relative_to(input_path)
+            out_file = output_path / rel_path
+            
+            # 确保父目录存在
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+
+            if out_file.exists() and not args.force:
+                print(f"Skipping {out_file.name} (exists)")
+                continue
+            
+            compressor.smart_compress_file(
+                input_file=vid,
+                output_file=out_file,
+                vmaf_analyzer=vmaf,
+                target_vmaf=args.vmaf_target,
+                max_size_ratio=args.size_limit
+            )
+    else:
+        # 单文件
+        if output_path.is_dir():
+            output_path = output_path / input_path.name
+            
+        if output_path.exists() and not args.force:
+             print(f"Skipping {output_path.name} (exists)")
+             return
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        compressor.smart_compress_file(
+            input_file=input_path, 
+            output_file=output_path,
+            vmaf_analyzer=vmaf,
+            target_vmaf=args.vmaf_target,
+            max_size_ratio=args.size_limit
+        )
+
 def cmd_plot(args):
     plotter = EfficiencyPlotter(
         csv_path=Path(args.csv).resolve(),
@@ -165,6 +223,16 @@ def main():
     p_analyze.add_argument("--jobs", type=int, default=1, help="Parallel jobs")
     p_analyze.add_argument("--use-neg-model", action="store_true", help="Use VMAF NEG model")
     p_analyze.set_defaults(func=cmd_analyze)
+
+    # 智能压缩命令
+    p_smart = subparsers.add_parser("smart", help="Smart compression (Optimize size/quality)")
+    p_smart.add_argument("input", help="Input file or directory")
+    p_smart.add_argument("output", help="Output file or directory")
+    p_smart.add_argument("--encoder", choices=["intel", "nvidia", "mac"], required=True, help="Encoder to use")
+    p_smart.add_argument("--vmaf-target", type=float, default=95.0, help="Target VMAF score (default: 95)")
+    p_smart.add_argument("--size-limit", type=float, default=0.8, help="Max size ratio vs original (default: 0.8)")
+    p_smart.add_argument("--force", action="store_true", help="Overwrite existing files")
+    p_smart.set_defaults(func=cmd_smart)
 
     # 绘图命令
     p_plot = subparsers.add_parser("plot", help="Plot efficiency graphs")
