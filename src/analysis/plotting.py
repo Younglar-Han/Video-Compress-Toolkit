@@ -25,7 +25,7 @@ class EfficiencyPlotter:
         source = stem
         mode = "Unknown"
 
-        # Regex patterns to match filename conventions
+        # 匹配文件名约定的正则模式
         patterns = [
             ("Intel", "qsv", r"^(?P<source>.+)_intel_q(?P<param>\d+)$"),
             ("Intel", "qsv", r"^(?P<source>.+)_qsv_(?P<param>\d+)$"),
@@ -45,7 +45,7 @@ class EfficiencyPlotter:
                 source = match.group("source")
                 break
         
-        # Refine device display name
+        # 优化设备显示名称
         if device == "Nvidia":
             if mode == "qmax":
                 device = "Nvidia (qmax)"
@@ -69,7 +69,7 @@ class EfficiencyPlotter:
             print(f"Error reading CSV: {e}")
             return
 
-        # Augment data
+        # 扩充数据
         data_rows = []
         for _, row in df.iterrows():
             fspec = row["FileSpec"]
@@ -89,21 +89,32 @@ class EfficiencyPlotter:
             print("No valid data parsed.")
             return
 
-        # Filter sources if requested
+        # 如果请求则过滤源
         if sources:
             clean_df = clean_df[clean_df["Source"].isin(sources)]
 
         unique_sources = clean_df["Source"].unique()
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Plot for each source
+        # 为每个源绘图
         for src in unique_sources:
             subset = clean_df[clean_df["Source"] == src]
             self._plot_single_source(src, subset)
 
-        # Plot overall (if multiple sources)
+        # 绘制整体图表（如果有多个源）
         if len(unique_sources) > 1:
             self._plot_overall(clean_df)
+
+    def _get_color(self, device_name: str) -> Optional[str]:
+        """返回对应设备的固定颜色"""
+        dev_lower = device_name.lower()
+        if "nvidia" in dev_lower:
+            return "tab:green"
+        elif "intel" in dev_lower:
+            return "tab:blue"
+        elif "mac" in dev_lower:
+            return "tab:orange"
+        return None
 
     def _plot_single_source(self, source: str, df: pd.DataFrame):
         plt.figure(figsize=(10, 6))
@@ -111,7 +122,23 @@ class EfficiencyPlotter:
         devices = df["Device"].unique()
         for dev in devices:
             d = df[df["Device"] == dev].sort_values("Bitrate")
-            plt.plot(d["Bitrate"], d["VMAF"], marker='o', label=dev)
+            color = self._get_color(dev)
+            
+            # 绘制线条和点
+            plt.plot(d["Bitrate"], d["VMAF"], marker='o', label=dev, color=color)
+            
+            # 标注质量参数
+            for _, row in d.iterrows():
+                plt.text(
+                    row["Bitrate"], 
+                    row["VMAF"], 
+                    str(row["Param"]), 
+                    fontsize=9, 
+                    color=color,
+                    weight='bold',
+                    ha='right', 
+                    va='bottom'
+                )
 
         plt.title(f"Compression Efficiency: {source}")
         plt.xlabel("Bitrate (kbps)")
@@ -119,7 +146,7 @@ class EfficiencyPlotter:
         plt.grid(True, linestyle="--", alpha=0.6)
         plt.legend()
         
-        # Sanitize filename (replace backslashes/slashes with underscores)
+        # 清理文件名（将反斜杠/斜杠替换为下划线）
         safe_source = source.replace("\\", "_").replace("/", "_")
         out_path = self.output_dir / f"compression_efficiency_{safe_source}.png"
         plt.savefig(out_path, dpi=100)
@@ -127,19 +154,20 @@ class EfficiencyPlotter:
         print(f"Saved plot: {out_path}")
 
     def _plot_overall(self, df: pd.DataFrame):
-        # Calculate average VMAF per device per approximate bitrate bin?
-        # Actually, simpler to just plot all points or aggregated trend lines.
-        # But since different videos have drastically different bitrates, 
-        # a simple scatter plot of everything might be messy but informative.
-        # Or better: Normalize bitrate relative to original? We don't have original bitrate here easily.
-        # So we'll skip complex aggregation and just do a scatter plot for now.
+        # 计算每个设备在近似比特率区间的平均 VMAF？
+        # 实际上，只绘制所有点或聚合趋势线更简单。
+        # 但由于不同视频的比特率差异巨大，
+        # 简单的散点图虽然可能混乱，但能提供信息。
+        # 或者更好：相对于原始比特率归一化？我们这里不容易获取原始比特率。
+        # 所以我们跳过复杂的聚合，目前只做散点图。
         
         plt.figure(figsize=(12, 8))
         
         devices = df["Device"].unique()
         for dev in devices:
             d = df[df["Device"] == dev]
-            plt.scatter(d["Bitrate"], d["VMAF"], alpha=0.5, label=dev)
+            color = self._get_color(dev)
+            plt.scatter(d["Bitrate"], d["VMAF"], alpha=0.5, label=dev, color=color)
 
         plt.title("Overall Compression Efficiency (All Sources)")
         plt.xlabel("Bitrate (kbps)")

@@ -12,7 +12,7 @@ class MacEncoder(BaseEncoder):
         return "hevc_videotoolbox"
 
     def get_ffmpeg_args(self, input_path: Path, output_path: Path, quality: int = 58, **kwargs) -> List[str]:
-        # macOS VideoToolbox mode
+        # macOS VideoToolbox 模式
         return [
             "ffmpeg",
             "-hwaccel", "videotoolbox",

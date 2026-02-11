@@ -12,7 +12,7 @@ class IntelEncoder(BaseEncoder):
         return "hevc_qsv"
 
     def get_ffmpeg_args(self, input_path: Path, output_path: Path, quality: int = 21, **kwargs) -> List[str]:
-        # Intel QSV mode
+        # Intel QSV 模式
         return [
             "ffmpeg",
             "-hwaccel", "qsv",

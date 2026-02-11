@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 from .base import BaseEncoder
 
 class NvidiaEncoder(BaseEncoder):
@@ -15,7 +15,7 @@ class NvidiaEncoder(BaseEncoder):
         self, 
         input_path: Path, 
         output_path: Path, 
-        quality: int = 24, # This is the QP value
+        quality: int = 24, # QP 值
         **kwargs
     ) -> List[str]:
         
@@ -28,9 +28,7 @@ class NvidiaEncoder(BaseEncoder):
             "-multipass", "fullres",
         ]
 
-        # Always use constqp mode
-        # "qmax" mode was removed because it's ineffective for quality control
-        # AQ modes were removed because they often degrade quality/size ratio
+        # 使用 Constant QP (CQP) 模式进行质量控制
         cmd.extend([
             "-rc", "constqp",
             "-qp", str(quality)

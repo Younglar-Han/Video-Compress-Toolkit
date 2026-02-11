@@ -96,12 +96,8 @@ python main.py batch --source Videos --output Results/Intel --encoder intel --st
 
 **示例**：
 ```bash
-# 扫描 NVENC 和 MAC 目录，与 Videos 里的原片对比
-python main.py analyze \
-    --ref-dir Videos \
-    --comp-dirs Results/NVENC Results/MAC \
-    --output Results/scores.csv \
-    --jobs 4
+# 扫描 NVENC Intel MAC 目录，与 Videos 里的原片对比
+python main.py analyze --ref-dir Videos --comp-dirs Results/NVENC Results/Intel Results/MAC --output Results/scores.csv --jobs 4
 ```
 
 #### 4. Plot 命令 (绘制图表)

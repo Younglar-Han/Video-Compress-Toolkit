@@ -2,7 +2,7 @@ import subprocess
 import csv
 import re
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class VMAFAnalyzer:
@@ -11,7 +11,7 @@ class VMAFAnalyzer:
         self.ffprobe_bin = ffprobe_bin
 
     def get_bitrate(self, file_path: Path) -> Optional[float]:
-        """Get video bitrate in kbps using ffprobe."""
+        """使用 ffprobe 获取视频比特率（kbps）。"""
         try:
             cmd = [
                 self.ffprobe_bin,
@@ -34,13 +34,13 @@ class VMAFAnalyzer:
         main_file: Path, 
         use_neg_model: bool = False
     ) -> Optional[float]:
-        """Calculate VMAF score."""
+        """计算 VMAF 分数。"""
         
-        # Construct VMAF model string
+        # 构建 VMAF 模型字符串
         model_str = "version=vmaf_v0.6.1neg" if use_neg_model else "version=vmaf_v0.6.1"
         
-        # Simple filter complex
-        # [0:v] is reference, [1:v] is distorted
+        # 简单的滤镜复合
+        # [0:v] 是参考视频，[1:v] 是失真视频
         filter_complex = f"[1:v][0:v]libvmaf=model={model_str}:n_threads=4"
 
         cmd = [
@@ -61,8 +61,8 @@ class VMAFAnalyzer:
                 errors="ignore"
             )
             
-            # Parse output for VMAF score
-            # Looking for: "VMAF score: 95.123456"
+            # 解析 VMAF 分数输出
+            # 寻找: "VMAF score: 95.123456"
             lines = result.stderr.splitlines()
             for line in reversed(lines):
                 if "VMAF score" in line:
@@ -83,14 +83,14 @@ class VMAFAnalyzer:
         jobs: int = 1,
         use_neg_model: bool = False
     ):
-        """Batch process VMAF calculation."""
+        """批量处理 VMAF 计算。"""
         
         results = []
         
-        # Ensure output directory exists
+        # 确保输出目录存在
         output_csv.parent.mkdir(parents=True, exist_ok=True)
         
-        # Prepare task list
+        # 准备任务列表
         tasks = []
         
         print(f"Starting VMAF analysis for {len(comp_files)} files...")
@@ -98,49 +98,36 @@ class VMAFAnalyzer:
         with ThreadPoolExecutor(max_workers=jobs) as executor:
             future_to_file = {}
             for comp_file in comp_files:
-                # Find matching reference file
-                # Assuming naming convention <original_name>_<something>.mp4
-                # We need to extract the original name.
-                # Heuristic: split by known suffixes or just try to match prefix
+                # 尝试根据文件名寻找参考文件
+                # 逻辑：去除已知的压缩后缀，然后在参考目录中查找同名文件（忽略扩展名）
                 
-                # Simple heuristic: find a file in ref_dir that is a prefix of comp_file
-                ref_file = None
-                
-                # Check specifics first
                 stem = comp_file.stem
                 
-                # Logic from original script:
-                # "test.mp4" -> "test_intel_q20.mp4"
-                # Remove known suffixes
-                
-                possible_ref = None
-                
-                # Verify if any file in ref_dir matches the start of the filename
-                # This is tricky because "video_1" could match "video_1_encoded.mp4"
-                # but "video" could also match "video_1_encoded.mp4" (imperfect match)
-                
-                # Let's clean suffixes
-                # _intel_q*, _nvidia_q*, _mac_qv*
-                # use regex to strip suffix
+                # 匹配常见的压缩后缀模式
+                # 支持：intel_q*, nvidia_qp*, nvidia_qmax* (legacy), mac_qv*
                 param_pattern = re.compile(
                     r"_(intel_q\d+|nvidia_qmax\d+|nvidia_qp\d+(_aq)?|mac_qv\d+)$"
                 )
                 
                 clean_stem = param_pattern.sub("", stem)
                 
-                possible_ref = ref_dir / f"{clean_stem}.mp4"
+                ref_file = None
+                # 在 ref_dir 中查找具有相同 stem 的视频文件
+                # 优先匹配 .mp4，但也支持其他常见格式
+                for ext in [".mp4", ".mkv", ".mov", ".avi"]:
+                    candidate = ref_dir / f"{clean_stem}{ext}"
+                    if candidate.exists():
+                        ref_file = candidate
+                        break
                 
-                if possible_ref.exists():
-                    ref_file = possible_ref
-                else:
-                    # Fallback or loop find?
-                    print(f"Warning: Reference file not found for {comp_file.name} (Expected {clean_stem}.mp4)")
+                if not ref_file:
+                    print(f"Warning: Reference file not found for {comp_file.name} (Expected {clean_stem}.[mp4|mkv|...])")
                     continue
                 
                 future = executor.submit(self._analyze_single, ref_file, comp_file, use_neg_model)
                 future_to_file[future] = comp_file
                 
-            # Collect results
+            # 收集结果
             completed_count = 0
             for future in as_completed(future_to_file):
                 comp_file = future_to_file[future]
@@ -153,9 +140,9 @@ class VMAFAnalyzer:
                 except Exception as exc:
                     print(f"Task generated an exception: {exc}")
 
-        # Write to CSV
-        # Format: FileSpec, VMAF, Bitrate
-        # Matching original format for compatibility with plotting script
+        # 写入 CSV
+        # 格式: FileSpec, VMAF, Bitrate
+        # 匹配原始格式以兼容绘图脚本
         with open(output_csv, "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerow(["FileSpec", "VMAF-Value", "Bitrate"])
@@ -170,7 +157,7 @@ class VMAFAnalyzer:
         bitrate = self.get_bitrate(comp_file)
         
         if vmaf is not None and bitrate is not None:
-            # We return output compatible with plotting script
-            # Plotting script expects 'FileSpec' which is effectively the filename
+            # 我们返回与绘图脚本兼容的输出
+            # 绘图脚本需要 'FileSpec'，实际上就是文件名
             return [comp_file.name, vmaf, bitrate]
         return None

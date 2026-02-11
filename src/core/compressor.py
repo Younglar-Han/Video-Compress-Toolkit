@@ -1,7 +1,6 @@
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional, Callable
 from src.encoders.base import BaseEncoder
 from src.utils.file_ops import human_size
 
@@ -16,27 +15,26 @@ class Compressor:
         **kwargs
     ) -> bool:
         """
-        Compress a single file.
-        Returns True if successful, False otherwise.
+        压缩单个文件。
+        如果成功返回 True，否则返回 False。
         """
         if not input_file.exists():
             print(f"Error: Input file {input_file} does not exist.")
             return False
 
-        # Create output directory if it doesn't exist
+        # 如果输出目录不存在则创建
         output_file.parent.mkdir(parents=True, exist_ok=True)
         
-        # Build command
+        # 构建命令
         cmd = self.encoder.get_ffmpeg_args(input_file, output_file, **kwargs)
         
         print(f"\nCompressing: {input_file.name} -> {output_file.name}")
         print(f"Encoder: {self.encoder.name}")
-        # print(f"Command: {' '.join(cmd)}") # Verbose
 
         start_time = time.time()
         
         try:
-            # Run FFmpeg
+            # 运行 FFmpeg
             result = subprocess.run(
                 cmd, 
                 stdout=subprocess.PIPE, 

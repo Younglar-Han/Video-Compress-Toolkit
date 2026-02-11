@@ -4,7 +4,7 @@ from .nvidia import NvidiaEncoder
 from .mac import MacEncoder
 
 def get_encoder(name: str) -> BaseEncoder:
-    """Factory function to get an encoder instance."""
+    """获取编码器实例的工厂函数。"""
     encoders = {
         "intel": IntelEncoder(),
         "nvidia": NvidiaEncoder(),

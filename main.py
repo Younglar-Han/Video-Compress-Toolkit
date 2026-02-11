@@ -3,8 +3,7 @@ import argparse
 import sys
 from pathlib import Path
 
-# Add src to path so we can import modules
-import sys
+# 添加 src 到路径以便导入模块
 sys.path.append(str(Path(__file__).parent))
 
 from src.encoders import get_encoder
@@ -14,9 +13,9 @@ from src.analysis.vmaf import VMAFAnalyzer
 from src.analysis.plotting import EfficiencyPlotter
 
 def cmd_compress(args):
-    """Handle recursive or single file compression."""
-    input_path = Path(args.input)
-    output_path = Path(args.output)
+    """处理递归或单文件压缩。"""
+    input_path = Path(args.input).resolve()
+    output_path = Path(args.output).resolve()
     
     if not input_path.exists():
         print(f"Error: Input {input_path} does not exist.")
@@ -25,38 +24,38 @@ def cmd_compress(args):
     encoder = get_encoder(args.encoder)
     compressor = Compressor(encoder)
     
-    # Prepare kwargs
+    # 准备参数
     kwargs = {}
     if args.quality:
         kwargs['quality'] = args.quality
         
-    # Recursive mode if input is directory
+    # 如果输入是目录则使用递归模式
     if input_path.is_dir():
         videos = find_videos(input_path, recursive=True)
         print(f"Found {len(videos)} videos in {input_path}")
         
         for vid in videos:
-            # Replicate directory structure in output
+            # 在输出中复制目录结构
             rel_path = vid.relative_to(input_path)
             out_file = output_path / rel_path
             
-            # Skip if exists
+            # 如果存在则跳过
             if out_file.exists() and not args.force:
                 print(f"Skipping {out_file.name} (exists)")
                 continue
                 
             compressor.compress_file(vid, out_file, **kwargs)
     else:
-        # Single file
+        # 单个文件
         if output_path.is_dir():
             output_path = output_path / input_path.name
         
         compressor.compress_file(input_path, output_path, **kwargs)
 
 def cmd_batch(args):
-    """Handle batch compression with parameter ranges."""
-    source_dir = Path(args.source)
-    output_dir = Path(args.output)
+    """批量处理带有参数范围的压缩。"""
+    source_dir = Path(args.source).resolve()
+    output_dir = Path(args.output).resolve()
     
     encoder = get_encoder(args.encoder)
     compressor = Compressor(encoder)
@@ -73,8 +72,7 @@ def cmd_batch(args):
         stem = vid.stem
         
         for q in range(start, end + 1):
-            # Naming convention based on encoder
-            # Adapting old naming for compatibility with analysis tools
+            # 这里的命名约定必须与 src/analysis/plotting.py 中的正则匹配保持一致
             suffix = ""
             if encoder.name == "intel":
                 suffix = f"_intel_q{q}"
@@ -101,11 +99,11 @@ def cmd_analyze(args):
         ffprobe_bin=args.ffprobe
     )
     
-    ref_dir = Path(args.ref_dir)
-    comp_dirs = [Path(p) for p in args.comp_dirs]
-    output_csv = Path(args.output)
+    ref_dir = Path(args.ref_dir).resolve()
+    comp_dirs = [Path(p).resolve() for p in args.comp_dirs]
+    output_csv = Path(args.output).resolve()
     
-    # Gather all compressed videos
+    # 收集所有压缩视频
     all_comp_videos = []
     for d in comp_dirs:
         if d.exists():
@@ -125,8 +123,8 @@ def cmd_analyze(args):
 
 def cmd_plot(args):
     plotter = EfficiencyPlotter(
-        csv_path=Path(args.csv),
-        output_dir=Path(args.output_dir)
+        csv_path=Path(args.csv).resolve(),
+        output_dir=Path(args.output_dir).resolve()
     )
     plotter.plot(sources=args.sources)
 
@@ -134,7 +132,7 @@ def main():
     parser = argparse.ArgumentParser(prog="VideoCompressToolkit", description="All-in-one Video Compression & Analysis Toolkit")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
-    # Compress Command
+    # 压缩命令
     p_compress = subparsers.add_parser("compress", help="Compress video(s)")
     p_compress.add_argument("input", help="Input file or directory")
     p_compress.add_argument("output", help="Output file or directory")
@@ -143,7 +141,7 @@ def main():
     p_compress.add_argument("--force", action="store_true", help="Overwrite existing files")
     p_compress.set_defaults(func=cmd_compress)
 
-    # Batch Command
+    # 批量命令
     p_batch = subparsers.add_parser("batch", help="Run batch compression test")
     p_batch.add_argument("--source", default="Videos", help="Source directory")
     p_batch.add_argument("--output", required=True, help="Output directory")
@@ -153,7 +151,7 @@ def main():
     p_batch.add_argument("--force", action="store_true", help="Overwrite existing files")
     p_batch.set_defaults(func=cmd_batch)
 
-    # Analyze Command
+    # 分析命令
     p_analyze = subparsers.add_parser("analyze", help="Calculate VMAF scores")
     p_analyze.add_argument("--ref-dir", default="Videos", help="Reference videos directory")
     p_analyze.add_argument("--comp-dirs", nargs="+", default=["QSV_Compressed", "NVENC_Compressed", "NVENC_QP_Compressed", "MAC_Compressed"], help="Compressed directories to scan")
@@ -164,7 +162,7 @@ def main():
     p_analyze.add_argument("--use-neg-model", action="store_true", help="Use VMAF NEG model")
     p_analyze.set_defaults(func=cmd_analyze)
 
-    # Plot Command
+    # 绘图命令
     p_plot = subparsers.add_parser("plot", help="Plot efficiency graphs")
     p_plot.add_argument("--csv", default="Results/FFMetrics.Results.csv", help="Input CSV file")
     p_plot.add_argument("--output-dir", default="Results", help="Output directory for plots")

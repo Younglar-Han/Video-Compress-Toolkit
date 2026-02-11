@@ -2,22 +2,18 @@ from pathlib import Path
 from typing import List, Generator
 
 def find_videos(directory: Path, extensions: List[str] = [".mp4"], recursive: bool = False) -> List[Path]:
-    """Find video files in a directory."""
+    """在目录中查找视频文件。"""
     directory = directory.resolve()
     if not directory.exists():
         return []
     
     files = []
     
-    # Define a helper to check extensions
+    # 定义辅助函数检查扩展名
     def is_video(p: Path) -> bool:
         return p.is_file() and p.suffix.lower() in extensions
 
     if recursive:
-        for ext in extensions:
-             # rglob is case sensitive on some platforms, keeping it simple or doing manual walk
-             # Standard Path.rglob("*") and filter is safer
-             pass
         for p in directory.rglob("*"):
              if is_video(p):
                  files.append(p)
@@ -29,7 +25,7 @@ def find_videos(directory: Path, extensions: List[str] = [".mp4"], recursive: bo
     return sorted(files)
 
 def human_size(size_bytes: int) -> str:
-    """Convert bytes to human readable string (MB)."""
+    """将字节转换为人类可读的字符串 (MB)。"""
     if size_bytes == 0:
         return "0B"
     size_name = ("B", "KB", "MB", "GB", "TB")
