@@ -8,10 +8,26 @@ from src.encoders.base import BaseEncoder
 from src.analysis.vmaf import VMAFAnalyzer
 from src.utils.file_ops import human_size
 
+
 class Compressor:
     def __init__(self, encoder: BaseEncoder, gpu_semaphore: Optional[threading.Semaphore] = None):
         self.encoder = encoder
         self.gpu_semaphore = gpu_semaphore
+
+    def _run_ffmpeg(self, cmd: list[str]) -> subprocess.CompletedProcess:
+        """执行 ffmpeg 命令并返回结果。"""
+        return subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False
+        )
+
+    def _start_quality_for_smart(self) -> int:
+        """根据步长方向计算智能压缩的起始质量参数。"""
+        if self.encoder.quality_step > 0:
+            return self.encoder.default_quality - 1
+        return self.encoder.default_quality + 1
 
     def smart_compress_file(
         self,
@@ -23,22 +39,16 @@ class Compressor:
     ) -> bool:
         """
         智能压缩模式：
-        1. 从推荐参数-1开始
+        1. 从推荐参数的“更低质量”起步（推荐值±1）
         2. 压缩并计算 VMAF
-        3. 如果 VMAF < 95，提高质量（q += step），直到 VMAF >= 95 或 体积 > 80% 原视频
+        3. 如果 VMAF 未达标，按步长提高质量，直到达标或触发体积限制
         """
-        
-        # 初始质量参数：推荐值
-        current_q = self.encoder.default_quality
-        
+
+        current_q = self._start_quality_for_smart()
         improve_step = self.encoder.quality_step
-        # 验证步长方向：
-        # Mac: step=1. q increases -> Quality increases.
-        # Nvidia: step=-1. q decreases -> Quality increases.
-        
         min_q, max_q = self.encoder.quality_range
-        
-        print(f"\n[Smart Compress] Start processing: {input_file.name}")
+
+        print(f"\n[智能压缩] 开始处理: {input_file.name}")
         
         src_size = input_file.stat().st_size
         best_effort_file = None
@@ -46,17 +56,19 @@ class Compressor:
         
         while True:
             # 1. 范围检查
-            if self.encoder.quality_step > 0: # Increasing q
-                if current_q > max_q: break
-            else: # Decreasing q
-                if current_q < min_q: break
+            if self.encoder.quality_step > 0:
+                if current_q > max_q:
+                    break
+            else:
+                if current_q < min_q:
+                    break
                 
             # 2. 有效性检查
             if not self.encoder.is_valid_quality(current_q):
                 current_q += improve_step
                 continue
 
-            print(f"  > Attempting Quality: {current_q}")
+            print(f"  > 尝试质量参数: {current_q}")
             
             # 3. 压缩
             temp_output = output_file.with_name(f"{output_file.stem}_temp_q{current_q}{output_file.suffix}")
@@ -65,7 +77,7 @@ class Compressor:
             success = self.compress_file(input_file, temp_output, quality=current_q)
             
             if not success:
-                print("    Compression failed.")
+                print("    压缩失败。")
                 current_q += improve_step
                 continue
                 
@@ -74,13 +86,13 @@ class Compressor:
             size_ratio = dst_size / src_size
             
             if size_ratio > max_size_ratio:
-                print(f"    [Stop] Size ratio {size_ratio:.2%} > {max_size_ratio:.2%}. Stopping.")
+                print(f"    [停止] 体积比例 {size_ratio:.2%} > {max_size_ratio:.2%}。")
                 temp_output.unlink()
                 
                 # 体积超标，根据需求直接使用原视频
-                print("    [Result] Compression not efficient enough (size > 80%). Using original video.")
-                if output_file.exists(): output_file.unlink()
-                # 使用 shutil.copy2 复制原文件
+                print("    [结果] 体积超标，使用原视频。")
+                if output_file.exists():
+                    output_file.unlink()
                 shutil.copy2(input_file, output_file)
                 
                 # 清理之前的 best effort 如果有
@@ -91,14 +103,14 @@ class Compressor:
             # 5. VMAF 检查
             score = vmaf_analyzer.calculate_vmaf(input_file, temp_output)
             if score is None:
-                print("    [Error] VMAF failed.")
+                print("    [错误] VMAF 计算失败。")
                 temp_output.unlink()
                 break
                 
-            print(f"    Result: VMAF={score:.2f}, Size={size_ratio:.2%}")
+            print(f"    结果: VMAF={score:.2f}, 体积={size_ratio:.2%}")
             
             if score >= target_vmaf:
-                print(f"    [Success] Target VMAF reached! ({score:.2f} >= {target_vmaf})")
+                print(f"    [成功] 达到目标 VMAF ({score:.2f} >= {target_vmaf})")
                 if output_file.exists():
                     output_file.unlink()
                 temp_output.rename(output_file)
@@ -107,9 +119,7 @@ class Compressor:
                     best_effort_file.unlink()
                 return True
             
-            # 没达到目标 VMAF，但体积合规。
-            # 这是目前为止最好的合规结果（因为我们在不断提高质量）
-            # 保存为备选 'best_effort'
+            # 没达到目标 VMAF，但体积合规，作为当前最佳候选
             if best_effort_file and best_effort_file.exists():
                 best_effort_file.unlink()
             
@@ -122,16 +132,17 @@ class Compressor:
             
             # 防止死循环（虽然有范围检查）
             if (improve_step > 0 and current_q > max_q) or (improve_step < 0 and current_q < min_q):
-                print("    [Stop] Reached quality parameter limit.")
+                print("    [停止] 达到质量参数上限。")
                 # 到头了，返回最好的
                 if best_effort_file and best_effort_file.exists():
-                     print(f"    [Result] Reached max quality. Returning best effort result (VMAF {best_effort_score:.2f})")
-                     if output_file.exists(): output_file.unlink()
-                     best_effort_file.rename(output_file)
-                     return True
+                    print(f"    [结果] 达到质量上限，返回最佳候选 (VMAF {best_effort_score:.2f})")
+                    if output_file.exists():
+                        output_file.unlink()
+                    best_effort_file.rename(output_file)
+                    return True
                 break
 
-        print("  [Finished] Unable to meet VMAF target within size limit.")
+        print("  [结束] 未能在体积限制内达到目标 VMAF。")
         if best_effort_file and best_effort_file.exists():
             best_effort_file.unlink()
         return False
@@ -149,7 +160,7 @@ class Compressor:
         :param max_ratio: 如果设置 (0.0-1.0)，当压缩后体积 > 原体积 * max_ratio 时，放弃压缩，直接使用原视频。
         """
         if not input_file.exists():
-            print(f"Error: Input file {input_file} does not exist.")
+            print(f"错误: 输入文件不存在 {input_file}")
             return False
 
         # 如果输出目录不存在则创建
@@ -158,31 +169,21 @@ class Compressor:
         # 构建命令
         cmd = self.encoder.get_ffmpeg_args(input_file, output_file, **kwargs)
         
-        print(f"\nCompressing: {input_file.name} -> {output_file.name}")
-        print(f"Encoder: {self.encoder.name}")
+        print(f"\n开始压缩: {input_file.name} -> {output_file.name}")
+        print(f"编码器: {self.encoder.name}")
 
         start_time = time.time()
         
         try:
-            # 运行 FFmpeg (受信号量控制)
-            # 定义实际运行函数
-            def run_ffmpeg():
-                return subprocess.run(
-                    cmd, 
-                    stdout=subprocess.PIPE, 
-                    stderr=subprocess.PIPE,
-                    check=False
-                )
-
             if self.gpu_semaphore:
-                # 如果配置了并发限制，先获取许可
                 with self.gpu_semaphore:
-                    result = run_ffmpeg()
+                    result = self._run_ffmpeg(cmd)
             else:
-                result = run_ffmpeg()
+                result = self._run_ffmpeg(cmd)
             
             if result.returncode != 0:
-                print(f"[FAILED] Compression failed for {input_file.name}")
+                print("")
+                print(f"[失败] 压缩失败: {input_file.name}")
                 print(result.stderr.decode(errors="ignore"))
                 if output_file.exists():
                     output_file.unlink()
@@ -195,16 +196,17 @@ class Compressor:
             ratio_percent = ratio * 100
             
             print("")
-            print(f"[SUCCESS] Time: {elapsed:.2f}s | Size: {human_size(src_size)} -> {human_size(dst_size)} ({ratio_percent:.2f}%)")
+            print(f"[成功] 用时: {elapsed:.2f}s | 体积: {human_size(src_size)} -> {human_size(dst_size)} ({ratio_percent:.2f}%)")
             
             # 检查体积限制
             if max_ratio is not None and ratio > max_ratio:
-                 print(f"    [Size Limit] Ratio {ratio_percent:.2f}% > {max_ratio*100}%. Reverting to original video.")
-                 if output_file.exists(): output_file.unlink()
-                 shutil.copy2(input_file, output_file)
+                print(f"    [体积限制] 比例 {ratio_percent:.2f}% > {max_ratio*100}%，回退到原视频。")
+                if output_file.exists():
+                    output_file.unlink()
+                shutil.copy2(input_file, output_file)
             
             return True
 
         except Exception as e:
-            print(f"Error executing ffmpeg: {e}")
+            print(f"执行 ffmpeg 出错: {e}")
             return False

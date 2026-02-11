@@ -1,27 +1,30 @@
 from pathlib import Path
-from typing import List, Generator
+from typing import List, Optional
 
-def find_videos(directory: Path, extensions: List[str] = [".mp4"], recursive: bool = False) -> List[Path]:
-    """在目录中查找视频文件。"""
+
+def find_videos(directory: Path, extensions: Optional[List[str]] = None, recursive: bool = False) -> List[Path]:
+    """在目录中查找视频文件，按路径排序后返回。"""
     directory = directory.resolve()
     if not directory.exists():
         return []
-    
-    files = []
-    
-    # 定义辅助函数检查扩展名
-    def is_video(p: Path) -> bool:
-        return p.is_file() and p.suffix.lower() in extensions
+
+    if extensions is None:
+        extensions = [".mp4"]
+
+    files: List[Path] = []
+
+    def is_video(path_item: Path) -> bool:
+        return path_item.is_file() and path_item.suffix.lower() in extensions
 
     if recursive:
-        for p in directory.rglob("*"):
-             if is_video(p):
-                 files.append(p)
+        for path_item in directory.rglob("*"):
+            if is_video(path_item):
+                files.append(path_item)
     else:
-        for p in directory.iterdir():
-            if is_video(p):
-                files.append(p)
-                
+        for path_item in directory.iterdir():
+            if is_video(path_item):
+                files.append(path_item)
+
     return sorted(files)
 
 def human_size(size_bytes: int) -> str:

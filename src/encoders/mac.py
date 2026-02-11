@@ -17,7 +17,7 @@ class MacEncoder(BaseEncoder):
 
     @property
     def quality_step(self) -> int:
-        return 1 # Higher is better for q:v
+        return 1  # q:v 越大质量越高
 
     @property
     def quality_range(self) -> tuple[int, int]:
@@ -44,7 +44,7 @@ class MacEncoder(BaseEncoder):
         并且某些值的输出结果是完全相同的（重复）。
         根据观察（在 Apple Silicon 上），以下范围内的有效值步骤如下：
         
-        Range 50-70:
+        范围 50-70:
         50, 51, 53, 55, 57, 60, 62, 64, 66, 68, 70
         """
         # 已知不重复的“有效”值集合
@@ -54,10 +54,14 @@ class MacEncoder(BaseEncoder):
         # 60 到 70 (step 2: 60, 62, 64, 66, 68, 70)
         
         if 50 <= quality <= 70:
-            if quality == 50: return True
-            if 51 <= quality <= 57: return quality % 2 == 1  # 51, 53, 55, 57
-            if 58 <= quality <= 59: return False             # 58, 59 are dupes of 57
-            if 60 <= quality <= 70: return quality % 2 == 0  # 60, 62, ... 70
+            if quality == 50:
+                return True
+            if 51 <= quality <= 57:
+                return quality % 2 == 1  # 51, 53, 55, 57
+            if 58 <= quality <= 59:
+                return False  # 58, 59 与 57 重复
+            if 60 <= quality <= 70:
+                return quality % 2 == 0  # 60, 62, ... 70
         
         # 对于尚未测量的范围，默认返回 True (不做假设)
         return True

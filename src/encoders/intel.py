@@ -17,11 +17,11 @@ class IntelEncoder(BaseEncoder):
 
     @property
     def quality_step(self) -> int:
-        return -1 # Lower is better for global_quality
+        return -1  # global_quality 越小质量越高
 
     @property
     def quality_range(self) -> tuple[int, int]:
-        return (1, 51) 
+        return (1, 51)
 
     def get_ffmpeg_args(self, input_path: Path, output_path: Path, quality: int = 21, **kwargs) -> List[str]:
         # Intel QSV 模式

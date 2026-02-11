@@ -11,5 +11,5 @@ def get_encoder(name: str) -> BaseEncoder:
         "mac": MacEncoder(),
     }
     if name not in encoders:
-        raise ValueError(f"Unknown encoder: {name}. Available: {list(encoders.keys())}")
+        raise ValueError(f"未知编码器: {name}. 可选项: {list(encoders.keys())}")
     return encoders[name]

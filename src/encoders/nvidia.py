@@ -17,7 +17,7 @@ class NvidiaEncoder(BaseEncoder):
 
     @property
     def quality_step(self) -> int:
-        return -1 # Lower QP is better
+        return -1  # QP 越小质量越高
 
     @property
     def quality_range(self) -> tuple[int, int]:
@@ -27,7 +27,7 @@ class NvidiaEncoder(BaseEncoder):
         self, 
         input_path: Path, 
         output_path: Path, 
-        quality: int = 24, # QP 值
+        quality: int = 24,  # QP 值
         **kwargs
     ) -> List[str]:
         
