@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import argparse
 import sys
+import threading
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 # 添加 src 到路径以便导入模块
 sys.path.append(str(Path(__file__).parent))
@@ -128,6 +130,8 @@ def cmd_analyze(args):
         use_neg_model=args.use_neg_model
     )
 
+from src.core.scheduler import SmartScheduler
+
 def cmd_smart(args):
     """处理智能压缩模式。"""
     input_path = Path(args.input).resolve()
@@ -138,9 +142,19 @@ def cmd_smart(args):
         return
 
     encoder = get_encoder(args.encoder)
-    compressor = Compressor(encoder)
+    compressor = Compressor(encoder) # No semaphore needed for scheduler, handled by single thread
     vmaf = VMAFAnalyzer() 
     
+    scheduler = SmartScheduler(
+        compressor=compressor,
+        vmaf=vmaf,
+        target_vmaf=args.vmaf_target,
+        size_limit=args.size_limit,
+        max_analyze_workers=4
+    )
+    
+    tasks = []
+
     # 如果输入是目录
     if input_path.is_dir():
         videos = find_videos(input_path, recursive=True)
@@ -156,14 +170,9 @@ def cmd_smart(args):
             if out_file.exists() and not args.force:
                 print(f"Skipping {out_file.name} (exists)")
                 continue
+                
+            tasks.append((vid, out_file))
             
-            compressor.smart_compress_file(
-                input_file=vid,
-                output_file=out_file,
-                vmaf_analyzer=vmaf,
-                target_vmaf=args.vmaf_target,
-                max_size_ratio=args.size_limit
-            )
     else:
         # 单文件
         if output_path.is_dir():
@@ -174,14 +183,13 @@ def cmd_smart(args):
              return
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        compressor.smart_compress_file(
-            input_file=input_path, 
-            output_file=output_path,
-            vmaf_analyzer=vmaf,
-            target_vmaf=args.vmaf_target,
-            max_size_ratio=args.size_limit
-        )
+        tasks.append((input_path, output_path))
+
+    # 启动调度器
+    if tasks:
+        scheduler.start(tasks)
+    else:
+        print("No tasks to process.")
 
 def cmd_plot(args):
     plotter = EfficiencyPlotter(
@@ -226,8 +234,8 @@ def main():
 
     # 智能压缩命令
     p_smart = subparsers.add_parser("smart", help="Smart compression (Optimize size/quality)")
-    p_smart.add_argument("input", help="Input file or directory")
-    p_smart.add_argument("output", help="Output file or directory")
+    p_smart.add_argument("input", nargs="?", default="Videos", help="Input file or directory (default: Videos)")
+    p_smart.add_argument("output", nargs="?", default="Compressed_smart", help="Output file or directory (default: Compressed_smart)")
     p_smart.add_argument("--encoder", choices=["intel", "nvidia", "mac"], required=True, help="Encoder to use")
     p_smart.add_argument("--vmaf-target", type=float, default=95.0, help="Target VMAF score (default: 95)")
     p_smart.add_argument("--size-limit", type=float, default=0.8, help="Max size ratio vs original (default: 0.8)")

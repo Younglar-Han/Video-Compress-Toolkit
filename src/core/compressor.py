@@ -1,14 +1,17 @@
 import subprocess
 import time
 import shutil
+import threading
+from typing import Optional
 from pathlib import Path
 from src.encoders.base import BaseEncoder
 from src.analysis.vmaf import VMAFAnalyzer
 from src.utils.file_ops import human_size
 
 class Compressor:
-    def __init__(self, encoder: BaseEncoder):
+    def __init__(self, encoder: BaseEncoder, gpu_semaphore: Optional[threading.Semaphore] = None):
         self.encoder = encoder
+        self.gpu_semaphore = gpu_semaphore
 
     def smart_compress_file(
         self,
@@ -137,7 +140,7 @@ class Compressor:
         self, 
         input_file: Path, 
         output_file: Path, 
-        max_ratio: float = None,
+        max_ratio: float = 0.8,
         **kwargs
     ) -> bool:
         """
@@ -161,13 +164,22 @@ class Compressor:
         start_time = time.time()
         
         try:
-            # 运行 FFmpeg
-            result = subprocess.run(
-                cmd, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE,
-                check=False
-            )
+            # 运行 FFmpeg (受信号量控制)
+            # 定义实际运行函数
+            def run_ffmpeg():
+                return subprocess.run(
+                    cmd, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE,
+                    check=False
+                )
+
+            if self.gpu_semaphore:
+                # 如果配置了并发限制，先获取许可
+                with self.gpu_semaphore:
+                    result = run_ffmpeg()
+            else:
+                result = run_ffmpeg()
             
             if result.returncode != 0:
                 print(f"[FAILED] Compression failed for {input_file.name}")
@@ -182,6 +194,7 @@ class Compressor:
             ratio = dst_size / src_size if src_size > 0 else 0
             ratio_percent = ratio * 100
             
+            print("")
             print(f"[SUCCESS] Time: {elapsed:.2f}s | Size: {human_size(src_size)} -> {human_size(dst_size)} ({ratio_percent:.2f}%)")
             
             # 检查体积限制
