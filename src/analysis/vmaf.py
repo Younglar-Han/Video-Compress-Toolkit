@@ -9,6 +9,33 @@ class VMAFAnalyzer:
     def __init__(self, ffmpeg_bin: str = "ffmpeg", ffprobe_bin: str = "ffprobe"):
         self.ffmpeg_bin = ffmpeg_bin
         self.ffprobe_bin = ffprobe_bin
+        self._check_vmaf_support()
+
+    def _check_vmaf_support(self):
+        """检查 FFmpeg 是否支持 libvmaf。"""
+        try:
+            cmd = [self.ffmpeg_bin, "-filters"]
+            result = subprocess.run(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE, 
+                encoding="utf-8", 
+                errors="ignore",
+                check=False
+            )
+            # 在滤镜列表中查找 libvmaf
+            if "libvmaf" not in result.stdout:
+                print("=================================================================")
+                print(f"警告: 检测到当前的 FFmpeg ('{self.ffmpeg_bin}') 不支持 'libvmaf'。")
+                print("VMAF 计算将会失败。")
+                print("请安装支持 VMAF 的版本，例如使用 Homebrew:")
+                print("  brew install ffmpeg-full")
+                print("如果你已经安装了 ffmpeg-full，请确保它在你的 PATH 中。")
+                print("=================================================================")
+        except FileNotFoundError:
+             print(f"Error: 找不到 FFmpeg 二进制文件 '{self.ffmpeg_bin}'。")
+        except Exception as e:
+             print(f"Warning: 无法验证 VMAF 支持: {e}")
 
     def get_bitrate(self, file_path: Path) -> Optional[float]:
         """使用 ffprobe 获取视频比特率（kbps）。"""

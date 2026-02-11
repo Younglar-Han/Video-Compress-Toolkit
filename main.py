@@ -77,6 +77,10 @@ def cmd_batch(args):
             if encoder.name == "intel":
                 suffix = f"_intel_q{q}"
             elif encoder.name == "mac":
+                # 检查参数是否有效（针对 Mac 编码器的重复值跳过机制）
+                if not encoder.is_valid_quality(q):
+                    print(f"Skipping quality {q} (已知 {encoder.name} 在此参数下产生重复结果)")
+                    continue
                 suffix = f"_mac_qv{q}"
             elif encoder.name == "nvidia":
                 suffix = f"_nvidia_qp{q}"

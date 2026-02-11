@@ -25,3 +25,27 @@ class MacEncoder(BaseEncoder):
             "-y",
             str(output_path),
         ]
+
+    def is_valid_quality(self, quality: int) -> bool:
+        """
+        macOS VideoToolbox 编码器的 'q:v' 参数不是线性的，
+        并且某些值的输出结果是完全相同的（重复）。
+        根据观察（在 Apple Silicon 上），以下范围内的有效值步骤如下：
+        
+        Range 50-70:
+        50, 51, 53, 55, 57, 60, 62, 64, 66, 68, 70
+        """
+        # 已知不重复的“有效”值集合
+        # 50 到 51 (step 1)
+        # 51 到 57 (step 2: 51, 53, 55, 57)
+        # 57 到 60 (gap 3)
+        # 60 到 70 (step 2: 60, 62, 64, 66, 68, 70)
+        
+        if 50 <= quality <= 70:
+            if quality == 50: return True
+            if 51 <= quality <= 57: return quality % 2 == 1  # 51, 53, 55, 57
+            if 58 <= quality <= 59: return False             # 58, 59 are dupes of 57
+            if 60 <= quality <= 70: return quality % 2 == 0  # 60, 62, ... 70
+        
+        # 对于尚未测量的范围，默认返回 True (不做假设)
+        return True
