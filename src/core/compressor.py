@@ -151,13 +151,13 @@ class Compressor:
         self, 
         input_file: Path, 
         output_file: Path, 
-        max_ratio: float = 0.8,
+        max_ratio: Optional[float] = 0.8,
         **kwargs
     ) -> bool:
         """
         压缩单个文件。
         如果成功返回 True，否则返回 False。
-        :param max_ratio: 如果设置 (0.0-1.0)，当压缩后体积 > 原体积 * max_ratio 时，放弃压缩，直接使用原视频。
+        :param max_ratio: 如果设置为 (0.0-1.0)，当压缩后体积 > 原体积 * max_ratio 时，放弃压缩，直接使用原视频；传 None 表示禁用该回退。
         """
         if not input_file.exists():
             print(f"错误: 输入文件不存在 {input_file}")

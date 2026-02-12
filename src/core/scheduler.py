@@ -216,6 +216,10 @@ class SmartScheduler:
         print("")
         print(f"[{task.input_path.name}] 开始 VMAF 分析...")
 
+        resolution, model_str = self.vmaf.get_vmaf_model_selection(task.input_path)
+        res_part = self.vmaf.format_resolution_for_log(resolution, mode="kv")
+        print(f"[{task.input_path.name}] {res_part} | 模型={model_str}")
+
         if task.temp_file is None or not task.temp_file.exists():
             print(f"[{task.input_path.name}] 缺少有效的临时文件，跳过分析。")
             self._finalize_task(task, use_best_effort=True)

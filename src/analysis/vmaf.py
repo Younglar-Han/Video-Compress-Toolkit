@@ -4,12 +4,98 @@ import re
 from pathlib import Path
 from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 
 class VMAFAnalyzer:
     def __init__(self, ffmpeg_bin: str = "ffmpeg", ffprobe_bin: str = "ffprobe"):
         self.ffmpeg_bin = ffmpeg_bin
         self.ffprobe_bin = ffprobe_bin
         self._check_vmaf_support()
+
+    @lru_cache(maxsize=1024)
+    def _get_resolution_cached(self, file_path_str: str) -> Optional[tuple[int, int]]:
+        """使用 ffprobe 获取视频分辨率（宽, 高），带缓存以减少重复探测。"""
+
+        try:
+            cmd = [
+                self.ffprobe_bin,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0:s=x",
+                file_path_str,
+            ]
+            output = subprocess.check_output(cmd).decode().strip()
+            match = re.match(r"^(\d+)x(\d+)$", output)
+            if not match:
+                return None
+            return int(match.group(1)), int(match.group(2))
+        except Exception:
+            return None
+
+    def get_resolution(self, file_path: Path) -> Optional[tuple[int, int]]:
+        """获取视频分辨率（宽, 高）。"""
+
+        return self._get_resolution_cached(str(file_path))
+
+    def _should_use_4k_model(self, file_path: Path) -> bool:
+        """判断是否应该使用 4K VMAF 模型。
+
+        规则：当分辨率像素总数 >= 3840*2160（UHD 4K）时，视为“等于或高于 4K”。
+        """
+
+        res = self.get_resolution(file_path)
+        if not res:
+            return False
+        width, height = res
+        return (width * height) >= (3840 * 2160)
+
+    def _build_vmaf_model_str(self, ref_file: Path, use_neg_model: bool) -> str:
+        """根据参考视频分辨率构建 VMAF 模型字符串。"""
+
+        base_model = "vmaf_4k_v0.6.1" if self._should_use_4k_model(ref_file) else "vmaf_v0.6.1"
+        if use_neg_model:
+            base_model = f"{base_model}neg"
+        return f"version={base_model}"
+
+    def get_vmaf_model_str(self, ref_file: Path, use_neg_model: bool = False) -> str:
+        """获取当前视频将使用的 VMAF 模型字符串（用于日志或外部调用）。"""
+
+        return self._build_vmaf_model_str(ref_file, use_neg_model)
+
+    def get_vmaf_model_selection(
+        self, ref_file: Path, use_neg_model: bool = False
+    ) -> tuple[Optional[tuple[int, int]], str]:
+        """统一接口：获取参考视频分辨率与将使用的 VMAF 模型字符串。"""
+
+        resolution = self.get_resolution(ref_file)
+        model_str = self._build_vmaf_model_str(ref_file, use_neg_model)
+        return resolution, model_str
+
+    def format_resolution_for_log(
+        self,
+        resolution: Optional[tuple[int, int]],
+        mode: str = "paren",
+    ) -> str:
+        """统一格式化分辨率日志片段。
+
+        - mode="paren": 返回 "(3840x2160)" 或 "(分辨率未知)"
+        - mode="kv": 返回 "参考分辨率=3840x2160" 或 "参考分辨率未知"
+        """
+
+        if resolution:
+            width, height = resolution
+            if mode == "kv":
+                return f"参考分辨率={width}x{height}"
+            return f"({width}x{height})"
+
+        if mode == "kv":
+            return "参考分辨率未知"
+        return "(分辨率未知)"
 
     def _check_vmaf_support(self):
         """检查 FFmpeg 是否支持 libvmaf。"""
@@ -63,8 +149,9 @@ class VMAFAnalyzer:
     ) -> Optional[float]:
         """计算 VMAF 分数。"""
 
-        # 构建 VMAF 模型字符串
-        model_str = "version=vmaf_v0.6.1neg" if use_neg_model else "version=vmaf_v0.6.1"
+        # 根据分辨率自动选择模型：低于 4K 用默认模型，等于或高于 4K 用 4K 模型
+        # 优先以参考视频分辨率为准；探测失败则回退默认模型
+        model_str = self._build_vmaf_model_str(ref_file, use_neg_model)
         
         # [0:v] 是参考视频，[1:v] 是压缩视频
         filter_complex = f"[1:v][0:v]libvmaf=model={model_str}:n_threads=4"
@@ -170,6 +257,12 @@ class VMAFAnalyzer:
         print(f"分析完成，结果已保存到 {output_csv}")
 
     def _analyze_single(self, ref_file: Path, comp_file: Path, use_neg_model: bool):
+        resolution, model_str = self.get_vmaf_model_selection(ref_file, use_neg_model)
+
+        print("")
+        res_part = self.format_resolution_for_log(resolution, mode="paren")
+        print(f"开始 VMAF: {comp_file.name} | 参考={ref_file.name} {res_part} | 模型={model_str}")
+
         vmaf = self.calculate_vmaf(ref_file, comp_file, use_neg_model)
         bitrate = self.get_bitrate(comp_file)
         
