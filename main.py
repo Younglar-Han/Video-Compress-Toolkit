@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import sys
+import time
 from pathlib import Path
 
 # 作为脚本直接运行时，确保可以导入 src/ 下的模块。
@@ -12,7 +13,7 @@ from src.core.scheduler import SmartScheduler
 from src.utils.file_ops import find_videos
 from src.analysis.vmaf import VMAFAnalyzer
 from src.analysis.plotting import EfficiencyPlotter
-from src.utils.console import error, info, section, warn
+from src.utils.console import error, info, section, success, warn
 from src.utils.naming import build_output_filename
 
 DEFAULT_SIZE_LIMIT = 0.8
@@ -252,7 +253,15 @@ def main():
 
     args = parser.parse_args()
     if hasattr(args, "func"):
-        args.func(args)
+        command_name = args.command or "unknown"
+        info(f"命令开始: {command_name}", leading_blank=True)
+        start_time = time.perf_counter()
+
+        try:
+            args.func(args)
+        finally:
+            elapsed = time.perf_counter() - start_time
+            success(f"命令结束: {command_name} | 总用时: {elapsed:.2f}s", leading_blank=True)
     else:
         parser.print_help()
 
