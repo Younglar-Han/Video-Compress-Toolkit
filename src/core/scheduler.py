@@ -25,6 +25,11 @@ class VideoTask:
     best_effort_file: Optional[Path] = None
     best_effort_score: float = -1.0
 
+    # 最终结果
+    final_vmaf: Optional[float] = None
+    final_ratio: Optional[float] = None
+    final_q: Optional[int] = None
+
     # 元数据
     src_size: int = 0
     attempts: int = 0
@@ -47,6 +52,7 @@ class SmartScheduler:
         self.lock = threading.Lock()
         self.workers: List[threading.Thread] = []
         self.shutdown_flag = False
+        self.results: List[VideoTask] = []
 
     def start(self, videos: List[Tuple[Path, Path]]):
         """启动调度器并阻塞等待所有任务完成。"""
@@ -85,6 +91,7 @@ class SmartScheduler:
             self.shutdown_flag = True
 
         print("[调度器] 全部任务完成。")
+        self._print_summary()
 
     def _create_and_queue_task(self, inp: Path, out: Path):
         if not inp.exists():
@@ -166,7 +173,12 @@ class SmartScheduler:
         )
         
         # 执行压缩（不使用 max_ratio，体积检查由调度器控制）
-        success = self.compressor.compress_file(task.input_path, task.temp_file, quality=task.current_q)
+        success = self.compressor.compress_file(
+            task.input_path,
+            task.temp_file,
+            max_ratio=None,
+            quality=task.current_q
+        )
         
         print("")
         print(f"[{task.input_path.name}] 压缩完成。")
@@ -192,6 +204,7 @@ class SmartScheduler:
 
             # 触发体积限制后，严格回退到原视频
             print(f"[{task.input_path.name}] 触发体积限制，回退到原视频。")
+            task.final_q = task.current_q
             self._finalize_task(task, use_best_effort=False)
             return
             
@@ -202,7 +215,12 @@ class SmartScheduler:
         """执行 VMAF 分析。"""
         print("")
         print(f"[{task.input_path.name}] 开始 VMAF 分析...")
-        
+
+        if task.temp_file is None or not task.temp_file.exists():
+            print(f"[{task.input_path.name}] 缺少有效的临时文件，跳过分析。")
+            self._finalize_task(task, use_best_effort=True)
+            return
+
         score = self.vmaf.calculate_vmaf(task.input_path, task.temp_file)
         print("")
         print(f"[{task.input_path.name}] VMAF 分析完成。")
@@ -215,7 +233,8 @@ class SmartScheduler:
 
         if score is None:
             print(f"[{task.input_path.name}] VMAF 计算失败。")
-            if task.temp_file.exists(): task.temp_file.unlink()
+            if task.temp_file.exists():
+                task.temp_file.unlink()
             self._finalize_task(task, use_best_effort=True)
             return
             
@@ -224,14 +243,17 @@ class SmartScheduler:
 
         if score >= self.target_vmaf:
             print(f"[{task.input_path.name}] 达到目标 VMAF。")
-            if task.output_path.exists(): task.output_path.unlink()
+            if task.output_path.exists():
+                task.output_path.unlink()
             task.temp_file.rename(task.output_path)
+            task.final_vmaf = score
+            task.final_q = task.current_q
 
             # 清理最佳候选
             if task.best_effort_file and task.best_effort_file.exists():
                 task.best_effort_file.unlink()
                 
-            self._finalize_task(task)
+            self._finalize_task(task, keep_output=True)
             return
         
         # 未达标，但体积合规，作为当前最佳候选
@@ -242,36 +264,60 @@ class SmartScheduler:
         task.best_effort_file = task.output_path.with_name(f"{task.output_path.stem}_best_effort{task.output_path.suffix}")
         task.temp_file.rename(task.best_effort_file)
         task.best_effort_score = score
+        task.final_q = task.current_q
         task.temp_file = None
         
         # 准备下一轮尝试
         task.current_q += task.step_direction
         self.comp_queue.put(task)
 
-    def _finalize_task(self, task: VideoTask, use_best_effort: bool = False):
+    def _finalize_task(self, task: VideoTask, use_best_effort: bool = False, keep_output: bool = False):
         # 根据策略确定最终输出
         final_source = None
+
+        if keep_output:
+            if task.src_size > 0 and task.output_path.exists():
+                task.final_ratio = task.output_path.stat().st_size / task.src_size
+
+            # 清理临时文件
+            if task.best_effort_file and task.best_effort_file.exists():
+                task.best_effort_file.unlink()
+
+            with self.lock:
+                self.active_tasks_count -= 1
+                self.results.append(task)
+            return
         
         if use_best_effort and task.best_effort_file and task.best_effort_file.exists():
             final_source = task.best_effort_file
             print(f"[{task.input_path.name}] 使用最佳候选结果 (VMAF={task.best_effort_score:.2f})")
+            if task.final_vmaf is None and task.best_effort_score >= 0:
+                task.final_vmaf = task.best_effort_score
+            if task.final_q is None:
+                task.final_q = task.current_q
         else:
             final_source = task.input_path
             if use_best_effort:
                 print(f"[{task.input_path.name}] 未找到合适压缩结果，使用原视频。")
             else:
                 print(f"[{task.input_path.name}] 压缩终止（如体积限制），使用原视频。")
+            if task.final_q is None:
+                task.final_q = None
 
         # 确保输出目录存在
         task.output_path.parent.mkdir(parents=True, exist_ok=True)
-            
-        if task.output_path.exists():
-            task.output_path.unlink()
-            
-        if final_source == task.input_path:
-            shutil.copy2(task.input_path, task.output_path)
-        elif final_source:
-            final_source.rename(task.output_path)
+
+        if not keep_output:
+            if task.output_path.exists():
+                task.output_path.unlink()
+
+            if final_source == task.input_path:
+                shutil.copy2(task.input_path, task.output_path)
+            elif final_source:
+                final_source.rename(task.output_path)
+
+        if task.src_size > 0 and task.output_path.exists():
+            task.final_ratio = task.output_path.stat().st_size / task.src_size
              
         # 清理临时文件
         if task.best_effort_file and task.best_effort_file.exists():
@@ -279,3 +325,22 @@ class SmartScheduler:
         
         with self.lock:
             self.active_tasks_count -= 1
+            self.results.append(task)
+
+    def _print_summary(self):
+        if not self.results:
+            return
+
+        print("\n[结果汇总]")
+        header = f"{'文件':<40} | {'参数':<6} | {'VMAF':<8} | {'压缩比':<8}"
+        print(header)
+        print("-" * len(header))
+
+        for task in sorted(self.results, key=lambda t: t.input_path.name):
+            q_str = f"{task.final_q}" if task.final_q is not None else "N/A"
+            vmaf_str = f"{task.final_vmaf:.2f}" if task.final_vmaf is not None else "N/A"
+            ratio_str = f"{task.final_ratio:.2%}" if task.final_ratio is not None else "N/A"
+            name = task.input_path.name
+            if len(name) > 40:
+                name = name[:37] + "..."
+            print(f"{name:<40} | {q_str:<6} | {vmaf_str:<8} | {ratio_str:<8}")
