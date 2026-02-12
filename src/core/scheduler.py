@@ -24,6 +24,7 @@ from src.utils.console import (
 class VideoTask:
     input_path: Path
     output_path: Path
+    display_name: str
 
     # 状态跟踪
     current_q: int
@@ -87,7 +88,7 @@ class SmartScheduler:
                 break
         return drained
 
-    def start(self, videos: List[Tuple[Path, Path]]):
+    def start(self, videos: List[Tuple[Path, Path, str]]):
         """启动调度器并阻塞等待所有任务完成。"""
         if not videos:
             return
@@ -97,8 +98,8 @@ class SmartScheduler:
         info(f"压缩线程: 1 | 分析线程: {self.max_analyze_workers}")
 
         # 1. 入队初始任务
-        for inp, out in videos:
-            self._create_and_queue_task(inp, out)
+        for inp, out, display_name in videos:
+            self._create_and_queue_task(inp, out, display_name)
 
         # 2. 启动线程
         t_comp = threading.Thread(target=self._compression_worker, name="Worker-Compress")
@@ -140,7 +141,7 @@ class SmartScheduler:
 
         self._print_summary()
 
-    def _create_and_queue_task(self, inp: Path, out: Path):
+    def _create_and_queue_task(self, inp: Path, out: Path, display_name: Optional[str] = None):
         if not inp.exists():
             error(f"输入文件缺失 {inp}")
             return
@@ -163,6 +164,7 @@ class SmartScheduler:
         task = VideoTask(
             input_path=inp,
             output_path=out,
+            display_name=display_name or inp.name,
             current_q=start_q,
             step_direction=step,
             min_q=min_q,
@@ -186,7 +188,7 @@ class SmartScheduler:
             try:
                 self._process_compression(task)
             except Exception as exc:
-                error(f"{task.input_path.name} | 压缩阶段异常: {exc}")
+                error(f"{task.display_name} | 压缩阶段异常: {exc}")
                 self._safe_unlink(task.temp_file)
                 self._safe_unlink(task.best_effort_file)
                 self._finalize_task(task, use_best_effort=False)
@@ -202,7 +204,7 @@ class SmartScheduler:
             try:
                 self._process_analysis(task)
             except Exception as exc:
-                error(f"{task.input_path.name} | 分析阶段异常: {exc}")
+                error(f"{task.display_name} | 分析阶段异常: {exc}")
                 self._safe_unlink(task.temp_file)
                 self._safe_unlink(task.best_effort_file)
                 self._finalize_task(task, use_best_effort=True)
@@ -214,18 +216,18 @@ class SmartScheduler:
 
         # 先做范围检查
         if not (task.min_q <= task.current_q <= task.max_q):
-            warn(f"{task.input_path.name} | 已达到质量范围边界 (Q={task.current_q})，停止。")
+            warn(f"{task.display_name} | 已达到质量范围边界 (Q={task.current_q})，停止。")
             self._finalize_task(task, use_best_effort=True)
             return
 
         # 跳过无效质量值（主要针对 macOS）
         if not self.compressor.encoder.is_valid_quality(task.current_q):
-            info(f"{task.input_path.name} | 跳过无效参数 Q={task.current_q}")
+            info(f"{task.display_name} | 跳过无效参数 Q={task.current_q}")
             task.current_q += task.step_direction
             self.comp_queue.put(task)
             return
 
-        phase_start(task.input_path.name, f"开始压缩 (Q={task.current_q})")
+        phase_start(task.display_name, f"开始压缩 (Q={task.current_q})")
 
         # 临时输出路径
         task.temp_file = task.output_path.with_name(
@@ -241,10 +243,10 @@ class SmartScheduler:
             verbose=False,
         )
         
-        phase_end(task.input_path.name, "压缩完成")
+        phase_end(task.display_name, "压缩完成")
         
         if not success:
-            warn(f"{task.input_path.name} | 压缩失败。")
+            warn(f"{task.display_name} | 压缩失败。")
             # 失败后尝试下一个参数
             task.current_q += task.step_direction
             self.comp_queue.put(task) 
@@ -259,12 +261,12 @@ class SmartScheduler:
         ratio = dst_size / task.src_size if task.src_size > 0 else 1.0
         
         if ratio > self.size_limit:
-            warn(f"{task.input_path.name} | 超过体积限制 ({ratio:.2%})。")
+            warn(f"{task.display_name} | 超过体积限制 ({ratio:.2%})。")
             self._safe_unlink(task.temp_file)
             task.temp_file = None
 
             # 触发体积限制后，严格回退到原视频
-            warn(f"{task.input_path.name} | 触发体积限制，回退到原视频。")
+            warn(f"{task.display_name} | 触发体积限制，回退到原视频。")
             task.final_q = task.current_q
             self._finalize_task(task, use_best_effort=False)
             return
@@ -274,19 +276,19 @@ class SmartScheduler:
 
     def _process_analysis(self, task: VideoTask):
         """执行 VMAF 分析。"""
-        phase_start(task.input_path.name, "开始 VMAF 分析")
+        phase_start(task.display_name, "开始 VMAF 分析")
 
         resolution, model_str = self.vmaf.get_vmaf_model_selection(task.input_path)
         res_part = self.vmaf.format_resolution_for_log(resolution, mode="kv")
-        info(f"{task.input_path.name} | {res_part} | 模型={model_str}")
+        info(f"{task.display_name} | {res_part} | 模型={model_str}")
 
         if task.temp_file is None or not task.temp_file.exists():
-            warn(f"{task.input_path.name} | 缺少有效的临时文件，跳过分析。")
+            warn(f"{task.display_name} | 缺少有效的临时文件，跳过分析。")
             self._finalize_task(task, use_best_effort=True)
             return
 
         score = self.vmaf.calculate_vmaf(task.input_path, task.temp_file)
-        phase_end(task.input_path.name, "VMAF 分析完成")
+        phase_end(task.display_name, "VMAF 分析完成")
         
         # 计算体积占比用于日志
         current_ratio_str = "N/A"
@@ -295,16 +297,16 @@ class SmartScheduler:
             current_ratio_str = f"{current_ratio:.2%}"
 
         if score is None:
-            warn(f"{task.input_path.name} | VMAF 计算失败。")
+            warn(f"{task.display_name} | VMAF 计算失败。")
             self._safe_unlink(task.temp_file)
             task.temp_file = None
             self._finalize_task(task, use_best_effort=True)
             return
             
-        info(f"{task.input_path.name} | VMAF={score:.2f} | 体积={current_ratio_str}", leading_blank=True)
+        info(f"{task.display_name} | VMAF={score:.2f} | 体积={current_ratio_str}", leading_blank=True)
 
         if score >= self.target_vmaf:
-            success(f"{task.input_path.name} | 达到目标 VMAF。")
+            success(f"{task.display_name} | 达到目标 VMAF。")
             if task.output_path.exists():
                 task.output_path.unlink()
             task.temp_file.rename(task.output_path)
@@ -361,16 +363,16 @@ class SmartScheduler:
         
         if use_best_effort and task.best_effort_file and task.best_effort_file.exists():
             final_source = task.best_effort_file
-            info(f"{task.input_path.name} | 使用最佳候选结果 (VMAF={task.best_effort_score:.2f})")
+            info(f"{task.display_name} | 使用最佳候选结果 (VMAF={task.best_effort_score:.2f})")
             if task.final_vmaf is None and task.best_effort_score >= 0:
                 task.final_vmaf = task.best_effort_score
             # final_q 在 best-effort 生成时已经记录，避免用 current_q（可能已推进）覆盖。
         else:
             final_source = task.input_path
             if use_best_effort:
-                warn(f"{task.input_path.name} | 未找到合适压缩结果，使用原视频。")
+                warn(f"{task.display_name} | 未找到合适压缩结果，使用原视频。")
             else:
-                warn(f"{task.input_path.name} | 压缩终止（如体积限制），使用原视频。")
+                warn(f"{task.display_name} | 压缩终止（如体积限制），使用原视频。")
             if task.final_q is None:
                 task.final_q = None
 
@@ -406,11 +408,11 @@ class SmartScheduler:
         section("结果汇总")
         rows: list[list[str]] = []
 
-        for task in sorted(self.results, key=lambda t: t.input_path.name):
+        for task in sorted(self.results, key=lambda t: t.display_name):
             q_str = f"{task.final_q}" if task.final_q is not None else "N/A"
             vmaf_str = f"{task.final_vmaf:.2f}" if task.final_vmaf is not None else "N/A"
             ratio_str = f"{task.final_ratio:.2%}" if task.final_ratio is not None else "N/A"
-            name = task.input_path.name
+            name = task.display_name
             if len(name) > 40:
                 name = name[:37] + "..."
             rows.append([name, q_str, vmaf_str, ratio_str])

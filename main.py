@@ -157,7 +157,7 @@ def cmd_smart(args):
         max_analyze_workers=4
     )
     
-    tasks = []
+    tasks: list[tuple[Path, Path, str]] = []
 
     # 如果输入是目录
     if input_path.is_dir():
@@ -173,8 +173,9 @@ def cmd_smart(args):
 
             if _should_skip(out_file, args.force):
                 continue
-                
-            tasks.append((vid, out_file))
+
+            display_name = rel_path.as_posix()
+            tasks.append((vid, out_file, display_name))
             
     else:
         # 单文件
@@ -183,7 +184,7 @@ def cmd_smart(args):
             return
 
         out_file.parent.mkdir(parents=True, exist_ok=True)
-        tasks.append((input_path, out_file))
+        tasks.append((input_path, out_file, input_path.name))
 
     # 启动调度器
     if tasks:
