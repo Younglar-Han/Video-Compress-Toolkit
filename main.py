@@ -3,14 +3,17 @@ import argparse
 import sys
 from pathlib import Path
 
-# 添加 src 到路径以便导入模块
-sys.path.append(str(Path(__file__).parent))
+# 作为脚本直接运行时，确保可以导入 src/ 下的模块。
+sys.path.insert(0, str(Path(__file__).parent))
 
 from src.encoders import get_encoder
 from src.core.compressor import Compressor
+from src.core.scheduler import SmartScheduler
 from src.utils.file_ops import find_videos
 from src.analysis.vmaf import VMAFAnalyzer
 from src.analysis.plotting import EfficiencyPlotter
+from src.utils.console import error, info, section, warn
+from src.utils.naming import build_output_filename
 
 DEFAULT_SIZE_LIMIT = 0.8
 
@@ -21,7 +24,7 @@ def _resolve_path(path_str: str) -> Path:
 
 def _should_skip(output_file: Path, force: bool) -> bool:
     if output_file.exists() and not force:
-        print(f"跳过 {output_file.name} (已存在)")
+        warn(f"跳过 {output_file.name} (已存在)")
         return True
     return False
 
@@ -34,25 +37,22 @@ def _resolve_output_for_file(input_file: Path, output_path: Path) -> Path:
 
 def cmd_compress(args):
     """处理递归或单文件压缩。"""
+    section("压缩")
     input_path = _resolve_path(args.input)
     output_path = _resolve_path(args.output)
 
     if not input_path.exists():
-        print(f"错误: 输入路径不存在 {input_path}")
+        error(f"输入路径不存在 {input_path}")
         return
 
     encoder = get_encoder(args.encoder)
     compressor = Compressor(encoder)
 
-    kwargs = {}
-    if args.quality is not None:
-        kwargs["quality"] = args.quality
-
     max_ratio = DEFAULT_SIZE_LIMIT
 
     if input_path.is_dir():
         videos = find_videos(input_path, recursive=True)
-        print(f"在 {input_path} 中找到 {len(videos)} 个视频")
+        info(f"在 {input_path} 中找到 {len(videos)} 个视频")
 
         for vid in videos:
             rel_path = vid.relative_to(input_path)
@@ -61,13 +61,21 @@ def cmd_compress(args):
             if _should_skip(out_file, args.force):
                 continue
 
-            compressor.compress_file(vid, out_file, max_ratio=max_ratio, **kwargs)
+            if args.quality is not None:
+                compressor.compress_file(vid, out_file, max_ratio=max_ratio, quality=args.quality)
+            else:
+                compressor.compress_file(vid, out_file, max_ratio=max_ratio)
     else:
         out_file = _resolve_output_for_file(input_path, output_path)
-        compressor.compress_file(input_path, out_file, max_ratio=max_ratio, **kwargs)
+        if args.quality is not None:
+            compressor.compress_file(input_path, out_file, max_ratio=max_ratio, quality=args.quality)
+        else:
+            compressor.compress_file(input_path, out_file, max_ratio=max_ratio)
+
 
 def cmd_batch(args):
     """批量处理带有参数范围的压缩。"""
+    section("批量压缩")
     source_dir = _resolve_path(args.source)
     output_dir = _resolve_path(args.output)
     
@@ -79,37 +87,27 @@ def cmd_batch(args):
     start = args.range_start
     end = args.range_end
     
-    print(f"批量请求: {encoder.name} | 参数范围: {start}-{end}")
+    info(f"批量请求: {encoder.name} | 参数范围: {start}-{end}")
     
     for vid in videos:
-        print(f"\n扫描: {vid.name}")
-        stem = vid.stem
+        info(f"扫描: {vid.name}", leading_blank=True)
         
         for q in range(start, end + 1):
-            # 这里的命名约定必须与 src/analysis/plotting.py 中的正则匹配保持一致
-            suffix = ""
-            if encoder.name == "intel":
-                suffix = f"_intel_q{q}"
-            elif encoder.name == "mac":
-                # 检查参数是否有效（针对 macOS 编码器的重复值跳过机制）
-                if not encoder.is_valid_quality(q):
-                    print(f"跳过参数 {q} (已知 {encoder.name} 在此参数下产生重复结果)")
-                    continue
-                suffix = f"_mac_qv{q}"
-            elif encoder.name == "nvidia":
-                suffix = f"_nvidia_qp{q}"
-            
-            out_name = f"{stem}{suffix}.mp4"
+            # macOS 编码器存在“重复输出”的已知参数点，保持原有跳过策略
+            if encoder.name == "mac" and not encoder.is_valid_quality(q):
+                warn(f"跳过参数 {q} (已知 {encoder.name} 在此参数下产生重复结果)")
+                continue
+
+            out_name = build_output_filename(vid, encoder.name, q).filename
             out_file = output_dir / out_name
             
             if _should_skip(out_file, args.force):
                 continue
             
-            kwargs = {'quality': q}
-
-            compressor.compress_file(vid, out_file, **kwargs)
+            compressor.compress_file(vid, out_file, quality=q)
 
 def cmd_analyze(args):
+    section("VMAF 分析")
     analyzer = VMAFAnalyzer(
         ffmpeg_bin=args.ffmpeg,
         ffprobe_bin=args.ffprobe
@@ -126,7 +124,7 @@ def cmd_analyze(args):
             all_comp_videos.extend(find_videos(d, recursive=True))
     
     if not all_comp_videos:
-        print("未找到已压缩视频。")
+        warn("未找到已压缩视频。")
         return
         
     analyzer.process_files(
@@ -137,15 +135,14 @@ def cmd_analyze(args):
         use_neg_model=args.use_neg_model
     )
 
-from src.core.scheduler import SmartScheduler
-
 def cmd_smart(args):
     """处理智能压缩模式。"""
+    section("智能压缩")
     input_path = _resolve_path(args.input)
     output_path = _resolve_path(args.output)
     
     if not input_path.exists():
-        print(f"错误: 输入路径不存在 {input_path}")
+        error(f"输入路径不存在 {input_path}")
         return
 
     encoder = get_encoder(args.encoder)
@@ -165,7 +162,7 @@ def cmd_smart(args):
     # 如果输入是目录
     if input_path.is_dir():
         videos = find_videos(input_path, recursive=True)
-        print(f"在 {input_path} 中找到 {len(videos)} 个视频")
+        info(f"在 {input_path} 中找到 {len(videos)} 个视频")
         
         for vid in videos:
             rel_path = vid.relative_to(input_path)
@@ -192,7 +189,7 @@ def cmd_smart(args):
     if tasks:
         scheduler.start(tasks)
     else:
-        print("没有需要处理的任务。")
+        warn("没有需要处理的任务。")
 
 def cmd_plot(args):
     plotter = EfficiencyPlotter(

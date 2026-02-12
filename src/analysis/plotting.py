@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import List, Optional
 
+from src.utils.console import error, info, success, warn
+
 class EfficiencyPlotter:
     def __init__(self, csv_path: Path, output_dir: Path):
         self.csv_path = csv_path
@@ -79,14 +81,14 @@ class EfficiencyPlotter:
 
     def plot(self, sources: Optional[List[str]] = None):
         if not self.csv_path.exists():
-            print(f"错误: 未找到 CSV 文件 {self.csv_path}。")
+            error(f"未找到 CSV 文件 {self.csv_path}。")
             return
 
-        print("正在加载数据...")
+        info("正在加载数据...", leading_blank=True)
         try:
             df = pd.read_csv(self.csv_path, sep="\t")
         except Exception as e:
-            print(f"读取 CSV 失败: {e}")
+            error(f"读取 CSV 失败: {e}")
             return
 
         # 扩充数据
@@ -106,7 +108,7 @@ class EfficiencyPlotter:
         
         clean_df = pd.DataFrame(data_rows)
         if clean_df.empty:
-            print("未解析到有效数据。")
+            warn("未解析到有效数据。")
             return
 
         # 根据参数过滤源
@@ -171,7 +173,7 @@ class EfficiencyPlotter:
         out_path = self.output_dir / f"compression_efficiency_{safe_source}.png"
         plt.savefig(out_path, dpi=300)
         plt.close()
-        print(f"已保存图表: {out_path}")
+        success(f"已保存图表: {out_path}")
 
     def _plot_overall(self, df: pd.DataFrame):
         # 由于不同视频的比特率差异较大，这里使用散点图展示整体分布
@@ -193,4 +195,4 @@ class EfficiencyPlotter:
         out_path = self.output_dir / "compression_efficiency_overall.png"
         plt.savefig(out_path, dpi=300)
         plt.close()
-        print(f"已保存图表: {out_path}")
+        success(f"已保存图表: {out_path}")

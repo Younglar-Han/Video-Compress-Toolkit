@@ -6,6 +6,9 @@ from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 
+from src.utils.console import error, info, phase_start, progress, success, warn
+from src.utils.naming import strip_param_suffix
+
 class VMAFAnalyzer:
     def __init__(self, ffmpeg_bin: str = "ffmpeg", ffprobe_bin: str = "ffprobe"):
         self.ffmpeg_bin = ffmpeg_bin
@@ -111,17 +114,14 @@ class VMAFAnalyzer:
             )
             # 在滤镜列表中查找 libvmaf
             if "libvmaf" not in result.stdout:
-                print("=================================================================")
-                print(f"警告: 检测到当前的 FFmpeg ('{self.ffmpeg_bin}') 不支持 'libvmaf'。")
-                print("VMAF 计算将会失败。")
-                print("请安装支持 VMAF 的版本，例如使用 Homebrew:")
-                print("  brew install ffmpeg-full")
-                print("如果你已经安装了 ffmpeg-full，请确保它在你的 PATH 中。")
-                print("=================================================================")
+                warn(f"检测到当前的 FFmpeg ('{self.ffmpeg_bin}') 不支持 'libvmaf'。", leading_blank=True)
+                warn("VMAF 计算将会失败。")
+                warn("请安装支持 VMAF 的版本，例如使用 Homebrew: brew install ffmpeg-full")
+                warn("如果你已经安装了 ffmpeg-full，请确保它在 PATH 中。")
         except FileNotFoundError:
-            print(f"错误: 找不到 FFmpeg 二进制文件 '{self.ffmpeg_bin}'。")
+            error(f"找不到 FFmpeg 二进制文件 '{self.ffmpeg_bin}'。")
         except Exception as e:
-            print(f"警告: 无法验证 VMAF 支持: {e}")
+            warn(f"无法验证 VMAF 支持: {e}")
 
     def get_bitrate(self, file_path: Path) -> Optional[float]:
         """使用 ffprobe 获取视频比特率（kbps）。"""
@@ -153,7 +153,8 @@ class VMAFAnalyzer:
         # 优先以参考视频分辨率为准；探测失败则回退默认模型
         model_str = self._build_vmaf_model_str(ref_file, use_neg_model)
         
-        # [0:v] 是参考视频，[1:v] 是压缩视频
+        # libvmaf 期望输入顺序为 [distorted][reference]
+        # 这里 distorted=压缩视频(main_file)，reference=原视频(ref_file)
         filter_complex = f"[1:v][0:v]libvmaf=model={model_str}:n_threads=4"
 
         cmd = [
@@ -184,7 +185,7 @@ class VMAFAnalyzer:
             
             return None
         except Exception as e:
-            print(f"计算 VMAF 失败: {main_file.name} | {e}")
+            warn(f"计算 VMAF 失败: {main_file.name} | {e}")
             return None
 
     def process_files(
@@ -202,32 +203,26 @@ class VMAFAnalyzer:
         # 确保输出目录存在
         output_csv.parent.mkdir(parents=True, exist_ok=True)
 
-        print(f"开始 VMAF 分析，共 {len(comp_files)} 个文件...")
+        phase_start("批量分析", f"开始 VMAF 分析，共 {len(comp_files)} 个文件")
+
+        # 建立参考视频索引：stem -> Path（按扩展名优先级选择）
+        ref_index: dict[str, Path] = {}
+        preferred_exts = [".mp4", ".mkv", ".mov", ".avi"]
+        if ref_dir.exists():
+            for ext in preferred_exts:
+                for p in ref_dir.glob(f"*{ext}"):
+                    if p.is_file() and p.stem not in ref_index:
+                        ref_index[p.stem] = p
         
         with ThreadPoolExecutor(max_workers=jobs) as executor:
             future_to_file = {}
             for comp_file in comp_files:
                 # 通过文件名寻找参考文件：去除压缩后缀后再匹配
-                stem = comp_file.stem
-
-                # 匹配常见的压缩后缀模式
-                # 支持：intel_q*, nvidia_qp*, nvidia_qmax*（旧版）, mac_qv*
-                param_pattern = re.compile(
-                    r"_(intel_q\d+|nvidia_qmax\d+|nvidia_qp\d+(_aq)?|mac_qv\d+)$"
-                )
-
-                clean_stem = param_pattern.sub("", stem)
-
-                ref_file = None
-                # 在 ref_dir 中查找具有相同 stem 的视频文件
-                for ext in [".mp4", ".mkv", ".mov", ".avi"]:
-                    candidate = ref_dir / f"{clean_stem}{ext}"
-                    if candidate.exists():
-                        ref_file = candidate
-                        break
+                clean_stem = strip_param_suffix(comp_file.stem)
+                ref_file = ref_index.get(clean_stem)
 
                 if not ref_file:
-                    print(f"警告: 未找到参考视频 {comp_file.name} (期望 {clean_stem}.[mp4|mkv|...])")
+                    warn(f"未找到参考视频 {comp_file.name} (期望 {clean_stem}.[mp4|mkv|...])")
                     continue
                 
                 future = executor.submit(self._analyze_single, ref_file, comp_file, use_neg_model)
@@ -242,9 +237,9 @@ class VMAFAnalyzer:
                     if res:
                         results.append(res)
                         completed_count += 1
-                        print(f"[{completed_count}/{len(future_to_file)}] 完成 {comp_file.name}")
+                        progress(completed_count, len(future_to_file), f"完成 {comp_file.name}")
                 except Exception as exc:
-                    print(f"任务异常: {exc}")
+                    warn(f"任务异常: {exc}")
 
         # 写入 CSV（保持绘图脚本兼容格式）
         with open(output_csv, "w", newline="") as f:
@@ -254,14 +249,13 @@ class VMAFAnalyzer:
             for r in results:
                 writer.writerow(r)
                 
-        print(f"分析完成，结果已保存到 {output_csv}")
+        success(f"分析完成，结果已保存到 {output_csv}", leading_blank=True)
 
     def _analyze_single(self, ref_file: Path, comp_file: Path, use_neg_model: bool):
         resolution, model_str = self.get_vmaf_model_selection(ref_file, use_neg_model)
 
-        print("")
         res_part = self.format_resolution_for_log(resolution, mode="paren")
-        print(f"开始 VMAF: {comp_file.name} | 参考={ref_file.name} {res_part} | 模型={model_str}")
+        phase_start(comp_file.name, f"开始 VMAF: 参考={ref_file.name} {res_part} | 模型={model_str}")
 
         vmaf = self.calculate_vmaf(ref_file, comp_file, use_neg_model)
         bitrate = self.get_bitrate(comp_file)

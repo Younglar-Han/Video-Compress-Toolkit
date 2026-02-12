@@ -2,11 +2,23 @@ from pathlib import Path
 from typing import List
 from .base import BaseEncoder
 
+
 class MacEncoder(BaseEncoder):
+    # 基于实测（Apple Silicon + VideoToolbox）确认的“重复输出参数”。
+    # 这些 q:v 在当前环境下会产生与相邻参数相同的结果，适合直接跳过。
+    _KNOWN_DUPLICATE_QUALITIES = {
+        3, 4, 6, 7, 9, 10, 12, 13, 15, 16,
+        18, 20, 21, 23, 24, 26, 27, 29, 31, 32,
+        34, 35, 37, 39, 40,
+        42, 44, 45, 47, 49, 50,
+        52, 54, 56, 58, 59, 61, 63, 65, 67, 69,
+        71, 73, 75, 77, 80, 82, 85,
+    }
+
     @property
     def name(self) -> str:
         return "mac"
-    
+
     @property
     def codec_name(self) -> str:
         return "hevc_videotoolbox"
@@ -41,27 +53,14 @@ class MacEncoder(BaseEncoder):
     def is_valid_quality(self, quality: int) -> bool:
         """
         macOS VideoToolbox 编码器的 'q:v' 参数不是线性的，
-        并且某些值的输出结果是完全相同的（重复）。
-        根据观察（在 Apple Silicon 上），以下范围内的有效值步骤如下：
-        
-        范围 50-70:
-        50, 51, 53, 55, 57, 60, 62, 64, 66, 68, 70
+        某些参数会得到重复输出。
+
+        当前策略：
+        - 对已实测确认的重复参数直接返回 False（跳过）。
+        - 其他参数默认返回 True，避免在未测区间过度假设。
         """
-        # 已知不重复的“有效”值集合
-        # 50 到 51 (step 1)
-        # 51 到 57 (step 2: 51, 53, 55, 57)
-        # 57 到 60 (gap 3)
-        # 60 到 70 (step 2: 60, 62, 64, 66, 68, 70)
-        
-        if 50 <= quality <= 70:
-            if quality == 50:
-                return True
-            if 51 <= quality <= 57:
-                return quality % 2 == 1  # 51, 53, 55, 57
-            if 58 <= quality <= 59:
-                return False  # 58, 59 与 57 重复
-            if 60 <= quality <= 70:
-                return quality % 2 == 0  # 60, 62, ... 70
-        
-        # 对于尚未测量的范围，默认返回 True (不做假设)
+        if quality in self._KNOWN_DUPLICATE_QUALITIES:
+            return False
+
+        # 对于尚未测量的范围，默认返回 True（不做假设）
         return True
