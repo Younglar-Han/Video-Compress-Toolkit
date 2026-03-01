@@ -26,6 +26,11 @@ class Compressor:
             check=False
         )
 
+    def _should_direct_copy(self, input_file: Path) -> bool:
+        """判断当前输入是否应直接复制而非压缩。"""
+
+        return input_file.suffix.lower() in {".jpg", ".jpeg"}
+
     def smart_compress_file(
         self,
         input_file: Path,
@@ -72,6 +77,19 @@ class Compressor:
 
         # 如果输出目录不存在则创建
         output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        if self._should_direct_copy(input_file):
+            try:
+                if output_file.exists():
+                    output_file.unlink()
+                shutil.copy2(input_file, output_file)
+                if verbose:
+                    info(f"检测到 JPG，直接复制: {input_file.name} -> {output_file.name}", leading_blank=True)
+                return True
+            except Exception as exc:
+                if verbose:
+                    error(f"JPG 直接复制失败: {exc}")
+                return False
         
         # 构建命令
         cmd = self.encoder.get_ffmpeg_args(input_file, output_file, **kwargs)

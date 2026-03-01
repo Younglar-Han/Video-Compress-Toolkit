@@ -17,6 +17,7 @@ from src.utils.console import error, info, section, success, warn
 from src.utils.naming import build_output_filename
 
 DEFAULT_SIZE_LIMIT = 0.8
+COMPRESS_INPUT_EXTS = [".mp4", ".jpg", ".jpeg"]
 
 
 def _resolve_path(path_str: str) -> Path:
@@ -52,7 +53,7 @@ def cmd_compress(args):
     max_ratio = DEFAULT_SIZE_LIMIT
 
     if input_path.is_dir():
-        videos = find_videos(input_path, recursive=True)
+        videos = find_videos(input_path, extensions=COMPRESS_INPUT_EXTS, recursive=True)
         info(f"在 {input_path} 中找到 {len(videos)} 个视频")
 
         for vid in videos:
@@ -162,7 +163,7 @@ def cmd_smart(args):
 
     # 如果输入是目录
     if input_path.is_dir():
-        videos = find_videos(input_path, recursive=True)
+        videos = find_videos(input_path, extensions=COMPRESS_INPUT_EXTS, recursive=True)
         info(f"在 {input_path} 中找到 {len(videos)} 个视频")
         
         for vid in videos:

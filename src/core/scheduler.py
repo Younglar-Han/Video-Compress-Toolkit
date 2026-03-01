@@ -88,6 +88,40 @@ class SmartScheduler:
                 break
         return drained
 
+    def _put_comp_queue_front(self, task: VideoTask) -> None:
+        """将任务重新插入压缩队列队首。"""
+
+        with self.comp_queue.mutex:
+            self.comp_queue.queue.appendleft(task)
+            self.comp_queue.unfinished_tasks += 1
+            self.comp_queue.not_empty.notify()
+
+    def _cleanup_task_intermediates(self, task: VideoTask) -> None:
+        """清理任务所有中间产物（临时文件与最佳候选文件）。"""
+
+        candidates: set[Path] = set()
+
+        if task.temp_file:
+            candidates.add(task.temp_file)
+        if task.best_effort_file:
+            candidates.add(task.best_effort_file)
+
+        output_dir = task.output_path.parent
+        temp_pattern = f"{task.output_path.stem}_temp_q*{task.output_path.suffix}"
+        for path in output_dir.glob(temp_pattern):
+            candidates.add(path)
+
+        best_effort_path = task.output_path.with_name(
+            f"{task.output_path.stem}_best_effort{task.output_path.suffix}"
+        )
+        candidates.add(best_effort_path)
+
+        for candidate in candidates:
+            self._safe_unlink(candidate)
+
+        task.temp_file = None
+        task.best_effort_file = None
+
     def start(self, videos: List[Tuple[Path, Path, str]]):
         """启动调度器并阻塞等待所有任务完成。"""
         if not videos:
@@ -214,6 +248,15 @@ class SmartScheduler:
         """执行压缩步骤。"""
         task.attempts += 1
 
+        if task.input_path.suffix.lower() in {".jpg", ".jpeg"}:
+            info(f"{task.display_name} | 检测到 JPG，直接复制。", leading_blank=True)
+            task.output_path.parent.mkdir(parents=True, exist_ok=True)
+            if task.output_path.exists():
+                task.output_path.unlink()
+            shutil.copy2(task.input_path, task.output_path)
+            self._finalize_task(task, keep_output=True)
+            return
+
         # 先做范围检查
         if not (task.min_q <= task.current_q <= task.max_q):
             warn(f"{task.display_name} | 已达到质量范围边界 (Q={task.current_q})，停止。")
@@ -264,6 +307,8 @@ class SmartScheduler:
             warn(f"{task.display_name} | 超过体积限制 ({ratio:.2%})。")
             self._safe_unlink(task.temp_file)
             task.temp_file = None
+
+            self._cleanup_task_intermediates(task)
 
             # 触发体积限制后，严格回退到原视频
             warn(f"{task.display_name} | 触发体积限制，回退到原视频。")
@@ -334,7 +379,7 @@ class SmartScheduler:
         
         # 准备下一轮尝试
         task.current_q += task.step_direction
-        self.comp_queue.put(task)
+        self._put_comp_queue_front(task)
 
     def _finalize_task(self, task: VideoTask, use_best_effort: bool = False, keep_output: bool = False):
         """将任务落盘成最终输出，并把任务加入 results。
