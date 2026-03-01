@@ -68,6 +68,7 @@ python main.py smart Videos Compressed_smart --encoder mac
 可选参数：
 - `--vmaf-target`：目标 VMAF，默认 `95.0`
 - `--size-limit`：体积上限，默认 `0.8`
+- `--analyze-workers`：VMAF 分析线程数，默认 `2`
 
 ### 3) 批量参数测试
 
@@ -137,7 +138,7 @@ python main.py analyze [--ref-dir Videos] [--comp-dirs ...] [--output Results/FF
 ### `smart`
 
 ```bash
-python main.py smart [input=Videos] [output=Compressed_smart] --encoder {intel,nvidia,mac} [--vmaf-target 95.0] [--size-limit 0.8] [--force]
+python main.py smart [input=Videos] [output=Compressed_smart] --encoder {intel,nvidia,mac} [--vmaf-target 95.0] [--size-limit 0.8] [--analyze-workers 4] [--force]
 ```
 
 ### `plot`

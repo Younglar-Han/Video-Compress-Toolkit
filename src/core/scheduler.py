@@ -64,7 +64,25 @@ class SmartScheduler:
         self.lock = threading.Lock()
         self.workers: List[threading.Thread] = []
         self.shutdown_flag = False
+        self.interrupted = False
         self.results: List[VideoTask] = []
+
+    def _mark_task_done(self, task: VideoTask, record_result: bool = True) -> None:
+        """更新任务计数并按需记录结果。"""
+
+        with self.lock:
+            self.active_tasks_count -= 1
+            if record_result:
+                self.results.append(task)
+
+    def _abort_task(self, task: VideoTask) -> None:
+        """中断场景下快速终止任务：仅清理中间文件，不回退复制原视频。"""
+
+        self._safe_unlink(task.temp_file)
+        self._safe_unlink(task.best_effort_file)
+        task.temp_file = None
+        task.best_effort_file = None
+        self._mark_task_done(task, record_result=False)
 
     def _safe_unlink(self, path: Optional[Path]) -> None:
         """安全删除文件（不存在或删除失败都不会抛异常）。"""
@@ -159,14 +177,13 @@ class SmartScheduler:
         except KeyboardInterrupt:
             warn("用户中断，正在停止...", leading_blank=True)
             self.shutdown_flag = True
+            self.interrupted = True
             interrupted = True
 
-            # 尽量回收尚未开始处理的任务，避免留下未输出/临时文件。
+            # 尽量回收尚未开始处理的任务，避免留下临时文件。
             pending = self._drain_queue(self.comp_queue) + self._drain_queue(self.analyze_queue)
             for task in pending:
-                self._safe_unlink(task.temp_file)
-                self._safe_unlink(task.best_effort_file)
-                self._finalize_task(task, use_best_effort=False)
+                self._abort_task(task)
 
         if interrupted:
             warn("已中断，已尽量回收未开始处理的任务。")
@@ -246,6 +263,10 @@ class SmartScheduler:
 
     def _process_compression(self, task: VideoTask):
         """执行压缩步骤。"""
+        if self.interrupted:
+            self._abort_task(task)
+            return
+
         task.attempts += 1
 
         if task.input_path.suffix.lower() in {".jpg", ".jpeg"}:
@@ -267,7 +288,10 @@ class SmartScheduler:
         if not self.compressor.encoder.is_valid_quality(task.current_q):
             info(f"{task.display_name} | 跳过无效参数 Q={task.current_q}")
             task.current_q += task.step_direction
-            self.comp_queue.put(task)
+            if self.interrupted:
+                self._abort_task(task)
+            else:
+                self.comp_queue.put(task)
             return
 
         phase_start(task.display_name, f"开始压缩 (Q={task.current_q})")
@@ -292,7 +316,10 @@ class SmartScheduler:
             warn(f"{task.display_name} | 压缩失败。")
             # 失败后尝试下一个参数
             task.current_q += task.step_direction
-            self.comp_queue.put(task) 
+            if self.interrupted:
+                self._abort_task(task)
+            else:
+                self.comp_queue.put(task)
             return
 
         # 体积检查
@@ -317,10 +344,18 @@ class SmartScheduler:
             return
             
         # 体积合规后进入 VMAF 分析
+        if self.interrupted:
+            self._abort_task(task)
+            return
+
         self.analyze_queue.put(task)
 
     def _process_analysis(self, task: VideoTask):
         """执行 VMAF 分析。"""
+        if self.interrupted:
+            self._abort_task(task)
+            return
+
         phase_start(task.display_name, "开始 VMAF 分析")
 
         resolution, model_str = self.vmaf.get_vmaf_model_selection(task.input_path)
@@ -379,6 +414,10 @@ class SmartScheduler:
         
         # 准备下一轮尝试
         task.current_q += task.step_direction
+        if self.interrupted:
+            self._abort_task(task)
+            return
+
         self._put_comp_queue_front(task)
 
     def _finalize_task(self, task: VideoTask, use_best_effort: bool = False, keep_output: bool = False):
@@ -387,6 +426,10 @@ class SmartScheduler:
         - keep_output=True：表示输出文件已就位，仅补充 final_ratio 与清理临时产物。
         - use_best_effort=True：优先使用 best_effort，否则回退到原视频。
         """
+
+        if self.interrupted and not keep_output:
+            self._abort_task(task)
+            return
 
         # 根据策略确定最终输出
         final_source = None
@@ -401,9 +444,7 @@ class SmartScheduler:
             task.temp_file = None
             task.best_effort_file = None
 
-            with self.lock:
-                self.active_tasks_count -= 1
-                self.results.append(task)
+            self._mark_task_done(task)
             return
         
         if use_best_effort and task.best_effort_file and task.best_effort_file.exists():
@@ -442,9 +483,7 @@ class SmartScheduler:
         task.temp_file = None
         task.best_effort_file = None
         
-        with self.lock:
-            self.active_tasks_count -= 1
-            self.results.append(task)
+        self._mark_task_done(task)
 
     def _print_summary(self):
         if not self.results:

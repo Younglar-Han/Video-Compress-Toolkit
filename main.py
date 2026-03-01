@@ -156,7 +156,7 @@ def cmd_smart(args):
         vmaf=vmaf,
         target_vmaf=args.vmaf_target,
         size_limit=args.size_limit,
-        max_analyze_workers=4
+        max_analyze_workers=args.analyze_workers
     )
     
     tasks: list[tuple[Path, Path, str]] = []
@@ -242,6 +242,7 @@ def main():
     p_smart.add_argument("--encoder", choices=["intel", "nvidia", "mac"], required=True, help="编码器")
     p_smart.add_argument("--vmaf-target", type=float, default=95.0, help="目标 VMAF 分数（默认: 95）")
     p_smart.add_argument("--size-limit", type=float, default=0.8, help="最大体积比例（默认: 0.8）")
+    p_smart.add_argument("--analyze-workers", type=int, default=2, help="VMAF 分析线程数（默认: 4）")
     p_smart.add_argument("--force", action="store_true", help="覆盖已存在文件")
     p_smart.set_defaults(func=cmd_smart)
 
