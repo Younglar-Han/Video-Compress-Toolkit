@@ -39,6 +39,8 @@ pip install pandas matplotlib
 
 ## 快速开始
 
+在根目录下创建 `Videos` 文件夹，放入待压缩视频（支持多级目录）。然后运行以下命令：
+
 查看帮助：
 
 ```bash
