@@ -69,6 +69,8 @@ python main.py smart Videos Compressed_smart --encoder mac
 - `--vmaf-target`：目标 VMAF，默认 `95.0`
 - `--size-limit`：体积上限，默认 `0.8`
 - `--analyze-workers`：VMAF 分析线程数，默认 `2`
+- `--max-pending-analyses`：分析队列积压阈值（默认自动为 `analyze_workers * 2`）
+- `--queue-debug`：打印队列入队/出队调试日志（含 attempts / priority / seq）
 
 ### 3) 批量参数测试
 
@@ -138,7 +140,7 @@ python main.py analyze [--ref-dir Videos] [--comp-dirs ...] [--output Results/FF
 ### `smart`
 
 ```bash
-python main.py smart [input=Videos] [output=Compressed_smart] --encoder {intel,nvidia,mac} [--vmaf-target 95.0] [--size-limit 0.8] [--analyze-workers 4] [--force]
+python main.py smart [input=Videos] [output=Compressed_smart] --encoder {intel,nvidia,mac} [--vmaf-target 95.0] [--size-limit 0.8] [--analyze-workers 2] [--max-pending-analyses N] [--queue-debug] [--force]
 ```
 
 ### `plot`
@@ -160,6 +162,39 @@ python main.py plot [--csv Results/FFMetrics.Results.csv] [--output-dir Results]
 3. 若体积比例 `> size_limit`：**立即放弃压缩结果，回退原视频**。
 4. 若 VMAF 达到目标：保存当前压缩结果并停止。
 5. 若未达目标但体积合规：保留 best-effort，继续提升质量；到达边界后返回 best-effort。
+
+### 当前调度与优先级逻辑（2026-03）
+
+为同时兼顾吞吐与“可中断时的完成率”，`smart` 采用如下策略：
+
+1. **双队列解耦**
+  - 压缩队列：单线程串行压缩（保护显卡/编码器稳定性）
+  - 分析队列：多线程并行 VMAF
+
+2. **重试优先（完成闭环优先）**
+  - VMAF 未达标后，任务会提升质量并以**高优先级**回到压缩队列。
+  - 多个重试任务之间按“重试深度”排序：重试轮次越高，优先级越高（例如第 2 次重试 > 第 1 次重试）。
+  - 在同一重试轮次内按进入时间先后处理（FIFO），避免同层任务乱序。
+  - 分析队列同样采用“重试深度优先 + 同层 FIFO”的策略。
+
+3. **分析背压（防止临时文件无限堆积）**
+  - 当分析队列积压达到阈值时，新的首轮压缩会暂缓并回队尾等待。
+  - 阈值由 `--max-pending-analyses` 控制；不传时自动使用 `analyze_workers * 2`。
+
+4. **体积限制严格回退 + 中间文件清理**
+  - 任何轮次若体积比例超过 `--size-limit`，立即回退原视频。
+  - 同时清理该任务历史临时文件（`_temp_q*`、`_best_effort*`）。
+
+5. **中断策略（宿舍场景）**
+  - `Ctrl+C` 时，未完成任务会被中止，不再回退复制原视频。
+  - 调度器会尽量清理输出目录残留中间文件，只保留已完成结果。
+
+6. **JPG/JPEG 特殊处理**
+  - 在普通压缩与智能压缩中，检测到 `.jpg/.jpeg` 会直接复制，不进入编码与 VMAF。
+
+7. **队列调试日志（可选）**
+  - 使用 `--queue-debug` 后，会输出压缩队列与分析队列的入队/出队信息。
+  - 日志字段包含：`attempts`、`priority`、`seq`，并附带当前 `comp_q` / `analyze_q` 队列长度。
 
 ---
 
