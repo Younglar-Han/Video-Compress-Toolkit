@@ -16,15 +16,66 @@ class Compressor:
     def __init__(self, encoder: BaseEncoder, gpu_semaphore: Optional[threading.Semaphore] = None):
         self.encoder = encoder
         self.gpu_semaphore = gpu_semaphore
+        self._process_lock = threading.Lock()
+        self._running_processes: set[subprocess.Popen[bytes]] = set()
 
     def _run_ffmpeg(self, cmd: list[str]) -> subprocess.CompletedProcess:
         """执行 ffmpeg 命令并返回结果。"""
-        return subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            check=False
         )
+        with self._process_lock:
+            self._running_processes.add(proc)
+
+        try:
+            stdout, stderr = proc.communicate()
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=proc.returncode,
+                stdout=stdout,
+                stderr=stderr,
+            )
+        finally:
+            with self._process_lock:
+                self._running_processes.discard(proc)
+
+    def terminate_running_processes(self, grace_timeout: float = 2.0) -> int:
+        """终止当前所有运行中的 ffmpeg 子进程，返回处理数量。"""
+
+        with self._process_lock:
+            processes = list(self._running_processes)
+
+        if not processes:
+            return 0
+
+        for proc in processes:
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    continue
+
+        deadline = time.monotonic() + grace_timeout
+        for proc in processes:
+            if proc.poll() is not None:
+                continue
+            remain = max(0.0, deadline - time.monotonic())
+            try:
+                proc.wait(timeout=remain)
+            except Exception:
+                if proc.poll() is None:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=1.0)
+                    except Exception:
+                        pass
+
+        return len(processes)
 
     def _should_direct_copy(self, input_file: Path) -> bool:
         """判断当前输入是否应直接复制而非压缩。"""

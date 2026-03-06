@@ -249,7 +249,7 @@ def main():
         "--max-pending-analyses",
         type=int,
         default=None,
-        help="分析队列积压阈值（默认: 自动=分析线程数*2，最小 1）",
+        help="分析队列积压阈值（默认: 自动=分析线程数，最小 1）",
     )
     p_smart.add_argument("--queue-debug", action="store_true", help="打印队列入队/出队调试日志")
     p_smart.add_argument("--force", action="store_true", help="覆盖已存在文件")

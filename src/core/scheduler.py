@@ -77,8 +77,9 @@ class SmartScheduler:
         self.results: List[VideoTask] = []
         self.comp_seq = itertools.count()
         self.analyze_seq = itertools.count()
+        self._backpressure_waiting_logged = False
         if max_pending_analyses is None:
-            self.max_pending_analyses = max(2, self.max_analyze_workers * 2)
+            self.max_pending_analyses = max(1, self.max_analyze_workers)
         else:
             self.max_pending_analyses = max(1, max_pending_analyses)
 
@@ -118,6 +119,31 @@ class SmartScheduler:
             self._put_comp_queue_front(task)
         else:
             self._put_comp_queue(task, high_priority=False)
+
+    def _should_wait_for_backpressure(self) -> bool:
+        """判断是否应在压缩出队前等待分析队列消化。"""
+
+        if self.analyze_queue.qsize() < self.max_pending_analyses:
+            return False
+
+        with self.comp_queue.mutex:
+            if not self.comp_queue.queue:
+                return False
+            head_priority, _seq, _task = self.comp_queue.queue[0]
+
+        # 仅当队首是首轮任务（priority >= 0）时启用等待；重试任务（priority < 0）仍然优先推进。
+        return head_priority >= 0
+
+    def _log_backpressure_wait(self) -> None:
+        """按需打印背压等待日志（单次）。"""
+
+        if not self.queue_debug or self._backpressure_waiting_logged:
+            return
+        self._backpressure_waiting_logged = True
+        info(
+            f"[队列调试] comp 等待背压 | analyze_q={self.analyze_queue.qsize()} | "
+            f"阈值={self.max_pending_analyses} | comp_q={self.comp_queue.qsize()}"
+        )
 
     def _mark_task_done(self, task: VideoTask, record_result: bool = True) -> None:
         """更新任务计数并按需记录结果。"""
@@ -279,6 +305,11 @@ class SmartScheduler:
             self.interrupted = True
             interrupted = True
 
+            killed = self.compressor.terminate_running_processes()
+            if killed > 0:
+                info(f"中断时已终止 {killed} 个 ffmpeg 子进程。")
+                time.sleep(0.2)
+
             # 尽量回收尚未开始处理的任务，避免留下临时文件。
             pending = self._drain_queue(self.comp_queue) + self._drain_queue(self.analyze_queue)
             for task in pending:
@@ -333,6 +364,13 @@ class SmartScheduler:
 
     def _compression_worker(self):
         while not self.shutdown_flag:
+            if self._should_wait_for_backpressure():
+                self._log_backpressure_wait()
+                time.sleep(BACKPRESSURE_SLEEP_SECONDS)
+                continue
+
+            self._backpressure_waiting_logged = False
+
             try:
                 # 使用超时便于检查退出标志
                 _item: CompQueueItem = self.comp_queue.get(timeout=1)
@@ -371,11 +409,6 @@ class SmartScheduler:
     def _process_compression(self, task: VideoTask):
         """执行压缩步骤。"""
         if self._abort_if_interrupted(task):
-            return
-
-        if task.attempts == 0 and self.analyze_queue.qsize() >= self.max_pending_analyses:
-            self._requeue_comp_task(task, front=False)
-            time.sleep(BACKPRESSURE_SLEEP_SECONDS)
             return
 
         task.attempts += 1

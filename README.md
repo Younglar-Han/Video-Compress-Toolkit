@@ -71,7 +71,7 @@ python main.py smart Videos Compressed_smart --encoder mac
 - `--vmaf-target`：目标 VMAF，默认 `95.0`
 - `--size-limit`：体积上限，默认 `0.8`
 - `--analyze-workers`：VMAF 分析线程数，默认 `2`
-- `--max-pending-analyses`：分析队列积压阈值（默认自动为 `analyze_workers * 2`）
+- `--max-pending-analyses`：分析队列积压阈值（默认自动为 `analyze_workers`）
 - `--queue-debug`：打印队列入队/出队调试日志（含 attempts / priority / seq）
 
 ### 3) 批量参数测试
@@ -181,7 +181,7 @@ python main.py plot [--csv Results/FFMetrics.Results.csv] [--output-dir Results]
 
 3. **分析背压（防止临时文件无限堆积）**
   - 当分析队列积压达到阈值时，新的首轮压缩会暂缓并回队尾等待。
-  - 阈值由 `--max-pending-analyses` 控制；不传时自动使用 `analyze_workers * 2`。
+  - 阈值由 `--max-pending-analyses` 控制；不传时自动使用 `analyze_workers`。
 
 4. **体积限制严格回退 + 中间文件清理**
   - 任何轮次若体积比例超过 `--size-limit`，立即回退原视频。
